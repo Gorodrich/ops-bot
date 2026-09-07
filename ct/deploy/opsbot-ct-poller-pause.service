@@ -1,0 +1,14 @@
+# /etc/systemd/system/opsbot-ct-poller-pause.service
+# CT102 の定期メンテナンス（毎日8:00前後・5〜10分）に伴う再起動で
+# Craftyとの連携が不安定化する問題を避けるため、メンテナンス想定時間帯の
+# 直前にポーラーを明示的に停止する（opsbot-ct-poller-pause.timerから起動）。
+#
+# systemctl disableではなくstopを使う理由：disableは次回起動時の自動起動を
+# 抑止するだけで、稼働中のプロセスは止まらない。
+
+[Unit]
+Description=Stop opsbot-ct-poller ahead of CT102 daily maintenance window
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl stop opsbot-ct-poller

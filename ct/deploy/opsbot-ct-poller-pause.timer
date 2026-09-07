@@ -1,0 +1,14 @@
+# /etc/systemd/system/opsbot-ct-poller-pause.timer
+# 毎日07:59（JST・CT102のローカル時刻）にopsbot-ct-poller-pause.serviceを起動する。
+# Persistent=trueにより、ちょうどこの時刻にCT102自体が再起動中でタイマーが
+# 発火し損ねた場合でも、起動後に取りこぼしを実行する。
+
+[Unit]
+Description=Daily pause of opsbot-ct-poller ahead of CT102 maintenance window
+
+[Timer]
+OnCalendar=*-*-* 07:59:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

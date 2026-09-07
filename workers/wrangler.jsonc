@@ -1,0 +1,52 @@
+{
+  // OpsBot Edge層（Cloudflare Workers）
+  // 秘密情報（DISCORD_BOT_TOKEN 等）は wrangler secret で登録し、ここには書かない（ルールc）。
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "opsbot",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-01-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  "observability": { "enabled": true },
+
+  // --- D1（§8：永続化） ---
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "opsbot",
+      // 自分の環境で構築する場合は `npx wrangler d1 create opsbot` の出力に表示される
+      // database_id に差し替える。この値はリソース識別子であり、Cloudflare の API トークンが
+      // なければ単体では使えないため、秘密情報としては扱わない（秘密情報は wrangler secret へ）。
+      "database_id": "681539e7-4aa4-48b9-8ca5-4c3970340d93",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  // --- Cron Triggers（§3.1：締切/督促/ダッシュボード/差分取得） ---
+  // "*/5 * * * *" は Phase 0 で確保した枠（締切/督促/ダッシュボード。ハンドラは後続フェーズ）。
+  // Phase 1 で追加：脱退・資格喪失の差分検知（毎時）、日次ホワイトリスト突合（§6.4.3・§6.4.4）。
+  // Phase 3 で追加：仮承認72h・グループ72hの期限切れ処理（15分ごと）。
+  //   ※このエントリが漏れていたため src/index.ts の CRON_PHASE3_DEADLINES が実運用では
+  //     一度も発火していなかった（Phase 4作業中に発見・修正）。
+  // Phase 4 で追加：投票（秘密投票24h・短縮投票）の締切処理（10分ごと）。
+  // Phase 5 で追加予定だった4ジョブ（保留タスク自動復帰・督促・投票リマインド・ダッシュボード）は、
+  // Cloudflare Workers Free枠のcronトリガー上限（アカウント全体で5件）に抵触するため新規cronを増やさず、
+  // 既存の "*/10 * * * *"（投票締切）と "*/15 * * * *"（仮承認期限）に相乗りさせた
+  // （2026-09-06決定。src/index.ts の CRON_FAST / CRON_SLOW 参照）。
+  "triggers": {
+    "crons": [
+      "*/5 * * * *",
+      "0 * * * *",
+      "0 9 * * *",
+      "*/15 * * * *",
+      "*/10 * * * *"
+    ]
+  },
+
+  // --- 非秘密の環境変数（IDは D1 settings テーブルに置くため、ここは最小限） ---
+  "vars": {
+    "OPSBOT_ENV": "development",
+    // シャドーモード（§9）：true の間は通知を開発者にのみ送る
+    "SHADOW_MODE": "true"
+  }
+}

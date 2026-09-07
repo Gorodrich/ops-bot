@@ -1,0 +1,13 @@
+# /etc/systemd/system/opsbot-ct-poller-resume.timer
+# 毎日08:15（JST・CT102のローカル時刻）にopsbot-ct-poller-resume.serviceを起動する。
+# メンテナンス（5〜10分想定）に対して余裕を持たせた時刻としている。
+
+[Unit]
+Description=Daily resume of opsbot-ct-poller after CT102 maintenance window
+
+[Timer]
+OnCalendar=*-*-* 08:15:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

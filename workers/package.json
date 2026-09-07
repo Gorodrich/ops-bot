@@ -1,0 +1,29 @@
+{
+  "name": "opsbot-workers",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "db:create": "wrangler d1 create opsbot",
+    "db:migrate:local": "wrangler d1 migrations apply opsbot --local",
+    "db:migrate:remote": "wrangler d1 migrations apply opsbot --remote",
+    "staff:validate": "node scripts/validate-staff.mjs ../staff.yaml",
+    "staff:seed": "node scripts/validate-staff.mjs --emit-sql ../staff.yaml",
+    "settings:validate": "node scripts/validate-settings.mjs ../settings.yaml",
+    "settings:seed": "node scripts/validate-settings.mjs --emit-sql ../settings.yaml",
+    "commands:register": "node scripts/register-commands.mjs",
+    "commands:register:guild": "node scripts/register-commands.mjs --guild",
+    "commands:unregister:global": "node scripts/unregister-global-commands.mjs"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250101.0",
+    "typescript": "^5.7.0",
+    "vitest": "^5.0.0",
+    "wrangler": "^4.129.0",
+    "yaml": "^2.6.0"
+  }
+}

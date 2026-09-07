@@ -1,0 +1,257 @@
+# settings.yaml のひな形（D1 settings テーブル・CLAUDE.md ルールc / 要件定義 §9）
+#
+# 使い方：
+#   1. このファイルを settings.yaml にコピーする（settings.yaml は .gitignore 済み：実IDのため）
+#   2. Phase 0 チェックリスト B-9 / B-10 / #4 で集めた実IDと期限値を記入する
+#   3. workers/ で `npm run settings:validate` で検証
+#   4. `npm run settings:seed` で UPSERT 文を生成し、D1 の settings テーブルへ投入
+#
+# 記入していないキーは投入対象から外れる（migration 時のプレースホルダ値のまま残る）。
+# 一部だけ更新したいときは、そのキーだけ残して他を消してよい（例：#37 の期限調整）。
+#
+# 値は settings テーブルの value 列（JSON 文字列）にそのまま JSON 化されて入る。
+# 数値は数値、真偽値は真偽値、IDは「文字列」で書くこと（先頭ゼロ・桁溢れ対策）。
+
+settings:
+  # ── Discord ────────────────────────────────────────────────
+  # ギルドID（B-10）
+  discord_guild_id: "000000000000000000"
+
+  # チャンネル/カテゴリID（#4）。キー名は参照側（Phase 1 以降）と揃える必要がある。
+  # キー名の確定が必要になったら docs/open-items.md #4 として運営に確認すること。
+  channels:
+    kaihatsu_ryo: "000000000000000000"      # 個人開発領の専用チャンネル
+    shokokuho: "000000000000000000"         # 諸国法チャンネル
+    kaigijo_forum: "000000000000000000"     # 会議場フォーラム
+    unei_only: "000000000000000000"         # 運営専用（ダッシュボード固定・督促Lv3の掲示先）
+    vote_hall: "000000000000000000"         # 運営内「投票場」（/modvote：秘密投票・短縮投票の投稿先専用）
+    participant_vote_hall: "000000000000000000" # 参加者投票「/vote」の投稿先。デバッグ用に当面vote_hallと同じ値でよい（2026-09-06決定）
+    application_status: "000000000000000000" # 参加者向け「申請受付状況」表示チャンネル
+    notify_default: "000000000000000000"     # Bot通知先（既定）
+
+  # ── ticket tool（docs/appendix/ticket-tool-spec.md §6）──────
+  ticket_tool:
+    ticket_open_category_ids: ["000000000000000000"]   # 新規チケット作成カテゴリID（1件以上）
+    ticket_closed_category_ids: []                     # クローズ済み移動先カテゴリID（あれば）
+    ticket_open_name_pattern: "^ticket-"               # 実際の命名プレフィックスに合わせる
+    ticket_closed_name_pattern: "^closed-"
+    ticket_channel_scan_interval_sec: 3600
+    ticket_keyword_filter_threshold: null
+
+  # ── ルール由来の期限（§4.6・運用実績で調整 #37）─────────────
+  deadlines:
+    vote_hours: 24
+    provisional_confirm_hours: 72
+    revoke_window_hours: 24
+    conflict_hold_hours: 72
+    quick_vote_minutes: 15   # 短縮投票の締切（§5.3：会議継続中の短時間タイマー。手動締切は未実装のため長めに）
+
+  # ── 割当アルゴリズムの重み・閾値（§4.5）────────────────────
+  assignment_weights:
+    w1: 1.0
+    w1_prime: 1.0
+    w2: 1.0
+    w3: 1.0
+    w4: 1.0
+    w5: 1.0
+    tag_match_threshold: 0.0
+    consecutive_assign_limit: 3
+
+  # ── 督促（§4.7）───────────────────────────────────────────
+  # levels は due_at からの経過時間（hours_after_due）でLv1〜4を発火する。初期値は弱め（決定事項）。
+  # target: dm（Lv1本人DM）/ mention（Lv2担当者メンション・運営専用チャンネル）/
+  #         broadcast（Lv3全体共有・運営専用チャンネル）/ reassign（Lv4自動再割当）
+  nudge:
+    quiet_hours: { from: "23:00", to: "08:00" }
+    max_per_day: 3
+    levels:
+      - { level: 1, hours_after_due: 24, target: "dm" }
+      - { level: 2, hours_after_due: 72, target: "mention" }
+      - { level: 3, hours_after_due: 120, target: "broadcast" }
+      - { level: 4, hours_after_due: 168, target: "reassign" }
+
+  # ── ルール由来でない期限のBot既定目標日数（§4.6・#37）─────────
+  # 「目標」であり義務ではないため、通知文には既定でその旨を明示する（実装側でテンプレート化）。
+  task_target_days:
+    default_days: 5
+    by_type:
+      T-A: 3   # 申請・承認（審査待ちが長引きやすいため短めの目標）
+      T-B: 3   # 参加者からの問い合わせ（LLM検出・§4.1.1）
+      T-C: 5   # 運営内の作業・宿題
+
+  # ── その他 ────────────────────────────────────────────────
+  # /kaihatsu set コマンドに定義する画像添付オプション image1..imageN の本数 N（§6.3.2・#33）。
+  # 個人開発領は1人1つで、その1つが何ゾーンに分散していてもよい（決定#5）。これはその
+  # 分散した領域を1回のコマンドで宣言するためのアップロード枠数にすぎず、領域の数や面積の
+  # 上限ではない。N を超えるゾーン画像がある場合は同一 group を指定した追加の
+  # /kaihatsu set で補う（§5.7.4）。ゾーンは 01〜16 の16区画なので上限は 16。
+  attachment_zone_count_default: 5
+
+  polling:                           # CT102ポーリング間隔（§3.4.2）
+    active_interval_sec: 4
+    idle_interval_sec: 45
+
+  account_link:                      # #42・#44
+    allow_self_overwrite: false
+    whitelist_removal_grace_hours: 0
+    inactive_retention_days: null
+
+  # ── ロールID（Phase 1：/authorise /modauth の実行資格判定）─────
+  roles:
+    hito: "000000000000000000"         # 人民ロール
+    kari_sanka: "000000000000000000"   # 仮参加者ロール
+    sub_aka: "000000000000000000"      # サブ垢ロール（/authorise 対象外・§6.4.1）
+    unei: "000000000000000000"         # 運営者ロール（/modauth 実行資格）
+
+  # ── ジョブ再試行・レポート（Phase 1：§6.4.4）────────────────
+  job_retry:
+    crafty_max_attempts: 5
+    crafty_retry_backoff_sec: 60
+    crafty_audit_report_hour_utc: 9    # 日次ホワイトリスト突き合わせの投稿時刻（UTC）
+    stale_after_sec: 300               # 一度もclaimされないままpendingが続いた場合のエスカレーション閾値（G-10）
+
+  # ── 承認事項の分類表（Phase 4：§5.5）─────────────────────────
+  # 表そのものは要件定義で確定済みの決定事項のため、以下は雛形ではなく実値として記入済み。
+  # quorum_type（method:"A"のみ）：
+  #   voters_majority              棄権者を除く運営投票者の過半数（通常の秘密投票・§5.2-6）
+  #   supermajority_voters         同・特別多数（threshold使用）
+  #   total_majority_excl_abstain  短縮投票専用（/modvote quick では常にこれに固定するため通常は使わない）
+  #   supermajority_total          運営者総数に対する特別多数（threshold使用）
+  #   total_majority_incl_abstain  棄権者も母数に含めた総数の過半数（threshold不使用。参加者投票の
+  #                                「ワールドデータの外部利用（非参加者含む）」用・2026-09-06決定）
+  #   unanimous_excl_target        対象者本人を除く全員の賛成（exclude_self: trueとセットで使う）
+  # method:"B"（記名許可）は quorum_type ではなく required_count（必要人数）を使う。
+  approval_types:
+    punishment_decision:
+      label: "処罰の決定・執行"
+      method: "A"
+      quorum_type: "voters_majority"
+      exclude_self: false
+    amnesty:
+      label: "恩赦"
+      method: "A"
+      quorum_type: "voters_majority"
+      exclude_self: false
+    protected_area_designation:
+      label: "特定保護区域の設定"
+      method: "A"
+      quorum_type: "voters_majority"
+      exclude_self: false
+    protected_area_build_approval:
+      label: "特定保護区域内での建築・採掘の承認"
+      method: "A"
+      quorum_type: "voters_majority"
+      exclude_self: false
+    info_nondisclosure:
+      label: "情報の不開示決定"
+      method: "A"
+      quorum_type: "voters_majority"
+      exclude_self: false
+    participation_review:
+      label: "参加審査後の可否"
+      method: "A"
+      quorum_type: "voters_majority"
+      exclude_self: false
+    territory_transfer_approval:
+      label: "領土の譲渡の承認"
+      method: "A"
+      quorum_type: "voters_majority"
+      exclude_self: false
+    nation_recognition:
+      label: "国家の公認・公認取消"
+      method: "A"
+      quorum_type: "voters_majority"
+      exclude_self: false
+    rule_enactment:
+      label: "ルールの制定・改正"
+      method: "A"
+      quorum_type: "supermajority_voters"
+      threshold: 0.6667   # 3分の2以上。参加者側の承認も別途必要（§5.5・本Botは運営側のみ扱う）
+      exclude_self: false
+      participant_vote_required: true
+    worlddata_external_participants_only:
+      label: "ワールドデータの外部利用（参加者限定）"
+      method: "A"
+      quorum_type: "voters_majority"
+      exclude_self: false
+      participant_vote_required: true
+    worlddata_external_include_nonparticipants:
+      label: "ワールドデータの外部利用（非参加者含む）"
+      method: "A"
+      quorum_type: "supermajority_total"
+      threshold: 0.6667   # 運営者総数の3分の2以上
+      exclude_self: false
+      participant_vote_required: true
+    staff_punishment_dismissal:
+      label: "運営者の処罰・解任"
+      method: "A"
+      quorum_type: "unanimous_excl_target"
+      exclude_self: true   # 対象の運営者本人を除く全員の賛成（target オプション必須）
+    staff_reappointment:
+      label: "運営者の再任"
+      method: "A"
+      quorum_type: "unanimous_excl_target"
+      exclude_self: true
+    land_reclamation:
+      label: "海の埋立ての許可"
+      method: "B"
+      required_count: 2    # /umetate 専用（禁止事項及び罰則に関するルール第11条第1項）
+      exclude_self: false
+    technician_beneficial_command:
+      label: "技術者のコマンド使用（利益増進目的）"
+      method: "B"
+      required_count: 3    # /kyoka kind:technician_beneficial_command で使用
+      exclude_self: false
+      participant_vote_required: true
+    other_majority:
+      label: "その他（分類表にない事項・通常多数決）"
+      method: "A"
+      quorum_type: "voters_majority"
+      exclude_self: false   # 分類表（§5.5）にない事案向けの汎用選択肢。/modvote start・/modvote quickで使用
+
+  # ── 参加者投票（/vote）の分類表（2026-09-06新設）────────────
+  # 運営投票（approval_types）とはテーブルが別。母数は「参加者」ロール（roles.hito）保有者数。
+  # 「ワールドデータの外部利用（非参加者含む）」のみ運営側と対で特別多数（参加者総数の過半数）とし、
+  # それ以外は通常の秘密投票（voters_majority）とする（決定事項）。
+  participant_approval_types:
+    former_participant_readmission:
+      label: "参加者となる権利の取得（元参加者）"
+      method: "A"
+      quorum_type: "voters_majority"
+      exclude_self: false
+    worlddata_external_participants_only:
+      label: "ワールドデータの外部利用（参加者限定）"
+      method: "A"
+      quorum_type: "voters_majority"
+      exclude_self: false
+    worlddata_external_include_nonparticipants:
+      label: "ワールドデータの外部利用（非参加者含む・特別多数）"
+      method: "A"
+      quorum_type: "total_majority_incl_abstain"   # 参加者の総数（棄権者含む）の過半数（thresholdは使わない）。運営側は別途approval_types側で3分の2以上
+      exclude_self: false
+    rule_enactment:
+      label: "ルール改正"
+      method: "A"
+      quorum_type: "voters_majority"
+      exclude_self: false
+    other_majority:
+      label: "その他（分類表にない事項・通常多数決）"
+      method: "A"
+      quorum_type: "voters_majority"
+      exclude_self: false
+
+  # ── LLM層（§7）───────────────────────────────────────────────
+  # shadow_mode: true の間はシャドーモード（検出結果はllm_shadow_detectionsに記録し、
+  # developer_discord_id 宛のDMにのみ通知。実タスク・実通知は一切発生しない）。
+  # §9のドライラン（最低1週間）で誤検出率を確認できたら false に変更するだけで本稼働に切り替わる
+  # （実タスク起票・実担当者への通知。コード変更・再デプロイ不要。Phase 7）。
+  llm:
+    developer_discord_id: "000000000000000000"   # シャドーモード通知（DM）先。開発者本人のユーザーID
+    confidence_threshold: 0.6                     # これ未満は「候補」扱い（shadow_mode=falseでは運営専用チャンネルへ採否ボタン付きで提示）
+    max_tokens: 1024
+    min_message_chars: 8
+    coarse_filter_patterns: []                    # 通常監視チャンネル用キーワード正規表現（空なら文字数のみで判定）
+    scan_interval_sec: 1800                       # §7.1：メッセージ差分取得の間隔（既定30分）
+    consecutive_failure_pause_threshold: 5        # 連続失敗でLLM層を自動一時停止（§7.4）
+    paused: false
+    shadow_mode: true                             # Phase 7：ドライラン完了後にfalseへ（本稼働）

@@ -1,0 +1,13 @@
+# /etc/systemd/system/opsbot-ct-poller-resume.service
+# opsbot-ct-poller-pause.serviceで停止したポーラーを、CT102の定期メンテナンス
+# 終了後に再開する（opsbot-ct-poller-resume.timerから起動）。
+#
+# opsbot-ct-poller.serviceのRestart=alwaysはsystemctl stopによる意図的な停止には
+# 反応しないため、明示的にstartする必要がある。
+
+[Unit]
+Description=Resume opsbot-ct-poller after CT102 daily maintenance window
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl start opsbot-ct-poller

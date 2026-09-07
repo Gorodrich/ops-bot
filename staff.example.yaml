@@ -1,0 +1,55 @@
+# staff.yaml のひな形（決定事項#2 / 要件定義 §4.4）
+#
+# 使い方：
+#   1. このファイルを staff.yaml にコピーする（staff.yaml は .gitignore 済み：個人情報のため）
+#   2. 運営者6名分のエントリを、各人の実態に即して記入する
+#   3. workers/ で `npm run staff:validate` で検証
+#   4. `npm run staff:seed` で INSERT 文を生成し、D1 の staff テーブルへ投入
+#
+# タグ語彙（§4.4・この9種類のみ使用可）：
+#   rule_drafting / technical / participant_support / moderation /
+#   community_management / announcement / survey / controversial_review / data_handling
+#
+# discord_permission_tier: admin | broad | standard（§4.5.1）
+# response_pattern: fast | normal | slow | deadline_driven
+# nudge_style: gentle | standard | firm
+
+staff:
+  - discord_id: "000000000000000001"
+    display_name: "（運営者1・表示名）"
+    active: true
+    tags: [rule_drafting, announcement]
+    weak_tags: [technical]
+    is_technician: false
+    discord_permission_tier: standard
+    requires_cosign: false
+    max_concurrent: 3
+    active_hours:
+      - { days: [mon, tue, wed, thu, fri], from: "20:00", to: "24:00" }
+      - { days: [sat, sun], from: "13:00", to: "24:00" }
+    response_pattern: normal
+    nudge_style: standard
+    on_leave:
+      active: false
+      until: null
+    notes: |
+      （得意・不得意、性格、依頼の仕方のコツを自由記述。機械層はこの欄を読まない）
+
+  - discord_id: "000000000000000002"
+    display_name: "（運営者2・技術担当）"
+    active: true
+    tags: [technical, data_handling]
+    weak_tags: []
+    is_technician: true
+    discord_permission_tier: admin
+    requires_cosign: false
+    max_concurrent: 2
+    active_hours:
+      - { days: [mon, tue, wed, thu, fri, sat, sun], from: "21:00", to: "24:00" }
+    response_pattern: deadline_driven
+    nudge_style: firm
+    on_leave:
+      active: false
+      until: null
+    notes: |
+      （自由記述）

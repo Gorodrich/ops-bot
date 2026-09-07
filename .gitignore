@@ -1,0 +1,51 @@
+# ===== 個人情報・秘密情報 =====
+staff.yaml
+settings.yaml
+*-seed.sql
+claims-seed.sql
+*.env
+.dev.vars*
+.wrangler/
+SECRET.txt
+
+# 本番データのバックアップ・一回限りの運用スクリプト
+backups/
+workers/scripts/reset-test-data.sql
+
+# ===== 非公開の設計・開発文書（公開リポジトリには含めない） =====
+# 要件定義の原本・フェーズ計画・意思決定ログ・未確定事項の管理表。
+# 公開する文書は README.md と docs/guide-*.md・docs/specification.md のみ。
+CLAUDE.md
+.claude/
+docs/phases/
+docs/requirements/
+docs/appendix/
+docs/discord_ops_bot_requirements.md
+docs/decisions.md
+docs/open-items.md
+docs/staff-analysis-prompt.md
+
+# ===== 依存・ビルド =====
+node_modules/
+dist/
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# ===== キャッシュ =====
+.pytest_cache/
+.ruff_cache/
+
+# ===== 画像処理ツールの実行時生成物 =====
+ct/work/
+output/
+input/
+migrated_masks/
+dynmap/
+
+# ===== OS・エディタ =====
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

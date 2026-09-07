@@ -1,0 +1,37 @@
+# /etc/systemd/system/opsbot-ct-poller.service
+# CT102 上で OpsBot ポーリングプロセスを常駐させる（§3.4.2）。
+# 常駐はするが、アイドル時は CPU/メモリをほぼ占有しないこと（§9）。
+
+[Unit]
+Description=OpsBot CT102 poller (pull-mode job queue consumer)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=opsbot
+Group=opsbot
+EnvironmentFile=/etc/opsbot/ct.env
+WorkingDirectory=/opt/opsbot/ct
+ExecStart=/opt/opsbot/ct/.venv/bin/python -m opsbot_ct.poller
+Restart=always
+RestartSec=10
+
+# リソース上限（§9・§11-13：OOM Killer での不定停止を避ける）
+MemoryMax=2G
+CPUQuota=200%
+Nice=10
+
+# ハードニング
+NoNewPrivileges=true
+ProtectSystem=strict
+# ProtectHome=true だと /home が空のスタブに差し替えられ、中間ディレクトリの
+# トラバース権限不足で opsbot からの Claude Code CLI 認証情報（~/.claude 配下）
+# 読み取りが Permission denied になることを実機（CT102）で確認したため、
+# read-only（実体をそのまま読み取り専用でマウント）に変更した（C-6・2026-09-06）。
+ProtectHome=read-only
+PrivateTmp=true
+ReadWritePaths=/var/lib/node_exporter/textfile_collector /opt/opsbot/ct/work /var/lib/opsbot/masks /home/opsbot/.claude /home/opsbot/.cache/claude-cli-nodejs
+
+[Install]
+WantedBy=multi-user.target

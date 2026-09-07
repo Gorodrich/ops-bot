@@ -1,0 +1,14 @@
+# 既定：テキストファイルはリポジトリ内で LF に正規化する
+* text=auto
+
+# Linux 上で実行・解釈されるファイルは、作業ツリーでも必ず LF にする。
+# CRLF が混入すると bash が "bad interpreter: /bin/bash^M" で失敗し、
+# systemd の unit ファイルも正しく読めなくなる（Windows で編集して
+# CT へ rsync する運用があるため明示しておく）。
+*.sh        text eol=lf
+*.service   text eol=lf
+*.timer     text eol=lf
+ct/deploy/ct.env.example text eol=lf
+
+# バイナリ
+*.png binary

@@ -1,0 +1,20 @@
+[project]
+name = "opsbot-ct"
+version = "0.0.0"
+description = "OpsBot CT102 層：Workers ジョブキューのポーリング取得・画像処理・Claude Code 実行"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx[http2]>=0.27",
+    "Pillow>=10.4",
+    "PyYAML>=6.0",
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.6"]
+
+[tool.setuptools]
+packages = ["opsbot_ct"]
+
+[tool.ruff]
+line-length = 100
