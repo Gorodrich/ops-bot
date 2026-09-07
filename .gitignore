@@ -24,6 +24,7 @@ docs/discord_ops_bot_requirements.md
 docs/decisions.md
 docs/open-items.md
 docs/staff-analysis-prompt.md
+README.bak.md
 
 # ===== 依存・ビルド =====
 node_modules/
