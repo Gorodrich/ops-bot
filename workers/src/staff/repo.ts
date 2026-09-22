@@ -9,6 +9,7 @@ export interface StaffRow {
   tags: string; // JSON配列
   weak_tags: string; // JSON配列
   is_technician: number;
+  is_developer: number;
   discord_permission_tier: "admin" | "broad" | "standard";
   requires_cosign: number;
   max_concurrent: number;

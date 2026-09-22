@@ -10,6 +10,7 @@ import { getChannels, getGuildId, getLlmSetting, getTicketToolSetting } from "..
 import { enqueueJob } from "../jobs/queue";
 import { filterMessages, type RawMessage } from "./prefilter";
 import { listOpenTicketChannelIds } from "./ticketScan";
+import { extractMentionedDiscordIds } from "./mentions";
 
 const SCAN_GATE_KEY = "__llm_scan_gate__";
 
@@ -75,6 +76,9 @@ export interface DetectMessageInput {
   source_message_url: string;
   channel_kind: "ticket" | "ops";
   author_discord_id: string;
+  // 本文中の`<@ID>`メンション先（機械的抽出・C-1）。CT側のLLM検出プロンプトへは転送せず、
+  // Workers側のjob.payloadにのみ保持し、割当の依頼者除外・タイブレークヒントに使う（decisions.md #65）。
+  mentioned_discord_ids: string[];
   body: string;
 }
 
@@ -137,6 +141,7 @@ export async function runLlmMessageScan(env: Env): Promise<void> {
         source_message_url: `https://discord.com/channels/${guildId}/${target.channelId}/${p.id}`,
         channel_kind: target.kind,
         author_discord_id: p.authorId,
+        mentioned_discord_ids: extractMentionedDiscordIds(p.content),
         body: p.content,
       });
     }

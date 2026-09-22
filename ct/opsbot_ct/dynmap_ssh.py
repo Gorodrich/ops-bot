@@ -45,6 +45,11 @@ def _validate_mc_name(mc_name: str) -> None:
         raise DynmapSSHError(f"不正なMinecraftユーザー名です（配置スクリプトへは渡しません）: {mc_name!r}")
 
 
+def _validate_tile_coord(value: int) -> None:
+    if not isinstance(value, int) or isinstance(value, bool) or not (0 <= value <= 9999):
+        raise DynmapSSHError(f"不正なタイル座標です（配置スクリプトへは渡しません）: {value!r}")
+
+
 @dataclass
 class DynmapSSHClient:
     cfg: Config
@@ -90,6 +95,14 @@ class DynmapSSHClient:
     def write_regions_js(self, content: str) -> None:
         self._run("write-regions", content.encode("utf-8"))
 
-    def write_image(self, mc_name: str, content: bytes) -> None:
+    def write_tile(self, mc_name: str, row: int, col: int, content: bytes) -> None:
+        """タイル分割された表示用PNGを1枚書き込む（decisions.md #63）。"""
         _validate_mc_name(mc_name)
-        self._run(f"write-image {mc_name}", content)
+        _validate_tile_coord(row)
+        _validate_tile_coord(col)
+        self._run(f"write-tile {mc_name} {row} {col}", content)
+
+    def write_preview(self, mc_name: str, content: bytes) -> None:
+        """ホバー当たり判定専用の縮小プレビューPNGを書き込む（decisions.md #63）。"""
+        _validate_mc_name(mc_name)
+        self._run(f"write-preview {mc_name}", content)

@@ -18,7 +18,7 @@ import {
   searchTasksForAutocomplete,
   type TaskRow,
 } from "./repo";
-import { autoAssign } from "./autoAssign";
+import { autoAssign, maybeEnqueueTaskTiebreakPreview } from "./autoAssign";
 import { computeBotDefaultDueAt, parseManualDueAtJst } from "./deadlines";
 import { buildAssignedNoticeEmbed, buildCoSignUnavailableNote, buildOwnTaskListEmbed, buildReassignNotice, manualReviewReasonText } from "./templates";
 import { postTaskAttentionPush, syncTaskMessage } from "./notify";
@@ -113,6 +113,7 @@ export async function handleTaskAdd(env: Env, interaction: Interaction, options:
   const { tags: requiredTags, error: tagError } = parseRequiredTags(options);
   if (tagError) return immediate(tagError);
   const requiresTechnician = optionValue(options, "requires_technician") === "true";
+  const requiresDeveloper = optionValue(options, "requires_developer") === "true";
   const permissionTierRaw = optionValue(options, "required_permission_tier");
   if (permissionTierRaw && !VALID_TIERS.has(permissionTierRaw)) return immediate("required_permission_tier は admin/broad/standard のいずれかです。");
   const requiredPermissionTier = (permissionTierRaw as PermissionTier | undefined) ?? null;
@@ -144,6 +145,7 @@ export async function handleTaskAdd(env: Env, interaction: Interaction, options:
         createdBy: operatorId,
         requiredTags,
         requiresTechnician,
+        requiresDeveloper,
         requiredPermissionTier,
         isControversial,
         estimatedLoad,
@@ -159,7 +161,8 @@ export async function handleTaskAdd(env: Env, interaction: Interaction, options:
       return `タスク #${taskId} を作成しました（担当：<@${manualAssignee}>・目標期限あり）。${cosignNote}`;
     }
 
-    const outcome = await autoAssign(env, { requiredTags, requiresTechnician, requiredPermissionTier, isControversial });
+    // 依頼者本人（/task addの実行者）が自動割当の候補に選ばれないよう除外する（decisions.md #65是正）。
+    const outcome = await autoAssign(env, { requiredTags, requiresTechnician, requiresDeveloper, requiredPermissionTier, isControversial }, [operatorId]);
     const assigned = outcome.reason === "ok" && outcome.primary;
     // 未割当でも運営が手動で期限を指定した場合はその期限を保持する（Bot既定の目標期限は割当と連動するが、
     // 手動指定は運営の意思決定のため割当状況に関わらず尊重する）。
@@ -174,6 +177,7 @@ export async function handleTaskAdd(env: Env, interaction: Interaction, options:
       createdBy: operatorId,
       requiredTags,
       requiresTechnician,
+      requiresDeveloper,
       requiredPermissionTier,
       isControversial,
       estimatedLoad,
@@ -182,13 +186,17 @@ export async function handleTaskAdd(env: Env, interaction: Interaction, options:
     });
 
     const reason: "no_eligible" | "tie_or_below_threshold" = outcome.reason === "no_eligible" ? "no_eligible" : "tie_or_below_threshold";
-    await syncTaskMessage(env, taskId, { manualReviewNote: assigned ? null : manualReviewReasonText(reason) }).catch((e) => console.error("タスク起票通知の送信に失敗", e));
+    const llmPreviewRequested =
+      !assigned && reason === "tie_or_below_threshold"
+        ? await maybeEnqueueTaskTiebreakPreview(env, { taskId, title, requiredTags, llmFallbackCandidateIds: outcome.llmFallbackCandidateIds })
+        : false;
+    await syncTaskMessage(env, taskId, { manualReviewNote: assigned ? null : manualReviewReasonText(reason, llmPreviewRequested) }).catch((e) => console.error("タスク起票通知の送信に失敗", e));
 
     if (!assigned) {
       await writeAuditLog(env, { actor: operatorId, action: "task_added", target: String(taskId), detail: { title, auto: true, assigned: false, reason: outcome.reason } });
       const freshTask = await getTask(env, taskId);
       if (freshTask) {
-        await postTaskAttentionPush(env, freshTask, `自動割当できませんでした（${manualReviewReasonText(reason)}）。`);
+        await postTaskAttentionPush(env, freshTask, `自動割当できませんでした（${manualReviewReasonText(reason, llmPreviewRequested)}）。`);
       }
       return `タスク #${taskId} を作成しましたが、自動割当できませんでした（運営チャンネルに手動対応を依頼しました）。`;
     }
@@ -256,6 +264,7 @@ async function reassignAfterDecline(env: Env, task: TaskRow, decliningOperatorId
     {
       requiredTags,
       requiresTechnician: task.requires_technician === 1,
+      requiresDeveloper: task.requires_developer === 1,
       requiredPermissionTier: (task.required_permission_tier as PermissionTier) || null,
       isControversial: task.is_controversial === 1,
     },
@@ -265,10 +274,14 @@ async function reassignAfterDecline(env: Env, task: TaskRow, decliningOperatorId
   if (outcome.reason !== "ok" || !outcome.primary) {
     await markUnassignedNeedsManualReview(env, task.id);
     const reason: "no_eligible" | "tie_or_below_threshold" = outcome.reason === "no_eligible" ? "no_eligible" : "tie_or_below_threshold";
-    await syncTaskMessage(env, task.id, { manualReviewNote: manualReviewReasonText(reason) }).catch((e) => console.error("タスクメッセージの更新に失敗", e));
+    const llmPreviewRequested =
+      reason === "tie_or_below_threshold"
+        ? await maybeEnqueueTaskTiebreakPreview(env, { taskId: task.id, title: task.title, requiredTags, llmFallbackCandidateIds: outcome.llmFallbackCandidateIds })
+        : false;
+    await syncTaskMessage(env, task.id, { manualReviewNote: manualReviewReasonText(reason, llmPreviewRequested) }).catch((e) => console.error("タスクメッセージの更新に失敗", e));
     const freshTask = await getTask(env, task.id);
     if (freshTask) {
-      await postTaskAttentionPush(env, freshTask, `辞退後の自動再割当に失敗しました（${manualReviewReasonText(reason)}）。`);
+      await postTaskAttentionPush(env, freshTask, `辞退後の自動再割当に失敗しました（${manualReviewReasonText(reason, llmPreviewRequested)}）。`);
     }
     return `タスク #${task.id} を辞退しました（未割当に戻しました）。自動再割当の候補者が見つからなかったため、運営チャンネルに手動対応を依頼しました。`;
   }

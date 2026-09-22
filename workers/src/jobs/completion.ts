@@ -24,6 +24,7 @@ import {
 import { finalizeApprovedSet, markHeldAndNotify, markProvisional } from "../kaihatsu/phase3";
 import { tryResolveGroup } from "../kaihatsu/groupResolution";
 import { handleClaudeCodeJobComplete } from "../llm/detectionCompletion";
+import { issueSystemTask } from "../tasks/autoIssue";
 
 interface CraftyOpPayload {
   op: "add" | "remove";
@@ -122,25 +123,16 @@ async function handleKaihatsuSetCompletion(
     await markFailedTerminal(env, job.id);
     await updateApplicationStatus(env, payload.application_id, "failed").catch(() => {});
 
-    await env.DB.prepare(
-      `INSERT INTO tasks (type, title, summary, related_rule, status, priority, created_at)
-       VALUES ('T-A', ?, ?, '§6.3', 'unassigned', 'high', strftime('%Y-%m-%dT%H:%M:%SZ','now'))`,
-    )
-      .bind(
-        `個人開発領の画像処理失敗：${payload.requester_mc_name}`,
-        `/kaihatsu set の画像処理ジョブが${job.attempts}回失敗しました。エラー: ${outcome.error ?? "不明"}`,
-      )
-      .run();
+    await issueSystemTask(env, {
+      title: `個人開発領の画像処理失敗：${payload.requester_mc_name}`,
+      summary: `/kaihatsu set の画像処理ジョブが${job.attempts}回失敗しました。エラー: ${outcome.error ?? "不明"}`,
+      relatedRule: "§6.3",
+      priority: "high",
+      requiredTags: ["technical"],
+      requiresDeveloper: true,
+    });
 
     await sendDirectMessage(env.DISCORD_BOT_TOKEN, payload.requester_discord_id, KAIHATSU_MESSAGES.processingFailed).catch(() => {});
-
-    if (channels.unei_only) {
-      await sendChannelMessage(
-        env.DISCORD_BOT_TOKEN,
-        channels.unei_only,
-        `【要対応】個人開発領の画像処理が${job.attempts}回失敗しました（${payload.requester_mc_name}）。タスクを起票しました。`,
-      ).catch(() => {});
-    }
     return;
   }
 
@@ -195,18 +187,14 @@ async function handleKaihatsuBatchCompletion(
     for (const p of payload.players) {
       await updateApplicationStatus(env, p.application_id, "failed").catch(() => {});
     }
-    await env.DB.prepare(
-      `INSERT INTO tasks (type, title, summary, related_rule, status, priority, created_at)
-       VALUES ('T-A', ?, ?, '§5.7.3', 'unassigned', 'high', strftime('%Y-%m-%dT%H:%M:%SZ','now'))`,
-    )
-      .bind(
-        `代表者一括申請の画像処理失敗（${payload.players.length}名分）`,
-        `job_queue #${job.id} が${job.attempts}回失敗しました。エラー: ${outcome.error ?? "不明"}`,
-      )
-      .run();
-    if (channels.unei_only) {
-      await sendChannelMessage(env.DISCORD_BOT_TOKEN, channels.unei_only, `【要対応】代表者一括申請の画像処理が失敗しました（job #${job.id}）。タスクを起票しました。`).catch(() => {});
-    }
+    await issueSystemTask(env, {
+      title: `代表者一括申請の画像処理失敗（${payload.players.length}名分）`,
+      summary: `job_queue #${job.id} が${job.attempts}回失敗しました。エラー: ${outcome.error ?? "不明"}`,
+      relatedRule: "§5.7.3",
+      priority: "high",
+      requiredTags: ["technical"],
+      requiresDeveloper: true,
+    });
     return;
   }
 
@@ -364,26 +352,15 @@ async function handleCraftyOpCompletion(
   await markFailedTerminal(env, job.id);
 
   const payload = JSON.parse(job.payload) as CraftyOpPayload;
-  const channels = await getChannels(env);
 
-  await env.DB.prepare(
-    `INSERT INTO tasks (type, title, summary, related_rule, status, priority, created_at)
-     VALUES ('T-A', ?, ?, ?, 'unassigned', 'high', strftime('%Y-%m-%dT%H:%M:%SZ','now'))`,
-  )
-    .bind(
-      `ホワイトリスト${payload.op === "add" ? "追加" : "削除"}の失敗：${payload.mc_name}`,
-      `Crafty API経由の whitelist ${payload.op} が${job.attempts}回失敗しました。手動での確認・対応が必要です。エラー: ${outcome.error ?? "不明"}`,
-      "§6.4.4",
-    )
-    .run();
-
-  if (channels.unei_only) {
-    await sendChannelMessage(
-      env.DISCORD_BOT_TOKEN,
-      channels.unei_only,
-      `【要対応】ホワイトリスト${payload.op === "add" ? "追加" : "削除"}が${job.attempts}回失敗しました（${payload.mc_name}）。タスクを起票しました。`,
-    ).catch(() => {});
-  }
+  await issueSystemTask(env, {
+    title: `ホワイトリスト${payload.op === "add" ? "追加" : "削除"}の失敗：${payload.mc_name}`,
+    summary: `Crafty API経由の whitelist ${payload.op} が${job.attempts}回失敗しました。手動での確認・対応が必要です。エラー: ${outcome.error ?? "不明"}`,
+    relatedRule: "§6.4.4",
+    priority: "high",
+    requiredTags: ["technical"],
+    requiresDeveloper: true,
+  });
 }
 
 async function handleWhitelistAuditCompletion(
@@ -446,23 +423,13 @@ async function handleDynmapSyncCompletion(
   await markFailedTerminal(env, job.id);
 
   const payload = JSON.parse(job.payload) as { op: string; mc_name: string };
-  const channels = await getChannels(env);
 
-  await env.DB.prepare(
-    `INSERT INTO tasks (type, title, summary, related_rule, status, priority, created_at)
-     VALUES ('T-A', ?, ?, '§6.3.4', 'unassigned', 'medium', strftime('%Y-%m-%dT%H:%M:%SZ','now'))`,
-  )
-    .bind(
-      `Dynmap反映失敗：${payload.mc_name}（${payload.op}）`,
-      `Dynmapへの自動反映が${job.attempts}回失敗しました。手動での配置・regions更新が必要です。エラー: ${outcome.error ?? "不明"}`,
-    )
-    .run();
-
-  if (channels.unei_only) {
-    await sendChannelMessage(
-      env.DISCORD_BOT_TOKEN,
-      channels.unei_only,
-      `【要対応】Dynmapへの自動反映が失敗しました（${payload.mc_name} / ${payload.op}）。タスクを起票しました。`,
-    ).catch(() => {});
-  }
+  await issueSystemTask(env, {
+    title: `Dynmap反映失敗：${payload.mc_name}（${payload.op}）`,
+    summary: `Dynmapへの自動反映が${job.attempts}回失敗しました。手動での配置・regions更新が必要です。エラー: ${outcome.error ?? "不明"}`,
+    relatedRule: "§6.3.4",
+    priority: "medium",
+    requiredTags: ["technical"],
+    requiresDeveloper: true,
+  });
 }

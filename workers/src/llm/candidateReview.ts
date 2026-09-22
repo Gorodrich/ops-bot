@@ -50,12 +50,18 @@ export async function handleLlmCandidateButton(env: Env, interaction: Interactio
   }
 
   const requiredTags = (JSON.parse(detection.required_tags || "[]") as string[]).filter(isValidTag);
-  const outcome = await autoAssign(env, {
-    requiredTags,
-    requiresTechnician: false,
-    requiredPermissionTier: null,
-    isControversial: requiredTags.includes("controversial_review"),
-  });
+  // 検出元メッセージの発言者本人が候補から除外されるよう配線する（decisions.md #65是正）。
+  const outcome = await autoAssign(
+    env,
+    {
+      requiredTags,
+      requiresTechnician: false,
+      requiresDeveloper: false,
+      requiredPermissionTier: null,
+      isControversial: requiredTags.includes("controversial_review"),
+    },
+    detection.message_author_discord_id ? [detection.message_author_discord_id] : [],
+  );
 
   // 運営が既に採用の意思決定を行っているため、スコア同点・閾値未満の場合もLLMへ再照会せず、
   // 未割当タスクとして起票し運営内の手動割当に委ねる（無限にタイブレークを繰り返さないため）。

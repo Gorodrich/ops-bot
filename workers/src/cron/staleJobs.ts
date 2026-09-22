@@ -7,8 +7,8 @@
 // CT102復旧後は claimJobs が通常どおり拾って処理する。
 
 import type { Env } from "../env";
-import { getJobRetrySetting, getChannels } from "../settings";
-import { sendChannelMessage } from "../discord/rest";
+import { getJobRetrySetting } from "../settings";
+import { issueSystemTask } from "../tasks/autoIssue";
 
 interface StaleJobRow {
   id: number;
@@ -31,28 +31,18 @@ export async function detectStaleJobs(env: Env): Promise<void> {
   const jobs = stale.results ?? [];
   if (jobs.length === 0) return;
 
-  const channels = await getChannels(env);
   const nowIso = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
 
   for (const job of jobs) {
-    await env.DB.prepare(
-      `INSERT INTO tasks (type, title, summary, related_rule, status, priority, created_at)
-       VALUES ('T-A', ?, ?, '§6.4.4', 'unassigned', 'high', strftime('%Y-%m-%dT%H:%M:%SZ','now'))`,
-    )
-      .bind(
-        `ジョブ滞留：CT102が job_queue #${job.id}（${job.kind}）を取得していません`,
-        `job_queue #${job.id}（kind=${job.kind}）が ${retry.stale_after_sec}秒以上 claim されていません（作成: ${job.created_at}）。CT102のポーリングプロセスの停止が疑われます。`,
-      )
-      .run();
+    await issueSystemTask(env, {
+      title: `ジョブ滞留：CT102が job_queue #${job.id}（${job.kind}）を取得していません`,
+      summary: `job_queue #${job.id}（kind=${job.kind}）が ${retry.stale_after_sec}秒以上 claim されていません（作成: ${job.created_at}）。CT102のポーリングプロセスの停止が疑われます。`,
+      relatedRule: "§6.4.4",
+      priority: "high",
+      requiredTags: ["technical"],
+      requiresDeveloper: true,
+    });
 
     await env.DB.prepare("UPDATE job_queue SET stale_notified_at = ? WHERE id = ?").bind(nowIso, job.id).run();
-
-    if (channels.unei_only) {
-      await sendChannelMessage(
-        env.DISCORD_BOT_TOKEN,
-        channels.unei_only,
-        `【要対応】job_queue #${job.id}（${job.kind}）がCT102に取得されないまま${retry.stale_after_sec}秒以上滞留しています。CT102の稼働状況を確認してください。タスクを起票しました。`,
-      ).catch(() => {});
-    }
   }
 }

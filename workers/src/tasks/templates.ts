@@ -10,10 +10,13 @@ export function discordTimestamp(iso: string): string {
 
 export const BOT_DEFAULT_DUE_NOTE = "（この期限はルール上の義務ではなく、Bot既定の「目標」です）";
 
-export function manualReviewReasonText(reason: "no_eligible" | "tie_or_below_threshold"): string {
-  return reason === "no_eligible"
-    ? "ハード条件（休暇中・技術者要件・実行権限レベル・上限稼働数等）を満たす候補者がいません"
-    : "候補者のスコアが同点、またはタグ一致度が閾値未満です（LLMフォールバックはPhase 6以降）";
+export function manualReviewReasonText(reason: "no_eligible" | "tie_or_below_threshold", llmPreviewRequested = false): string {
+  if (reason === "no_eligible") {
+    return "ハード条件（休暇中・技術者要件・実行権限レベル・上限稼働数等）を満たす候補者がいません";
+  }
+  return llmPreviewRequested
+    ? "候補者のスコアが同点、またはタグ一致度が閾値未満です（LLMの参考プレビューを開発者へDM送信しました。採否は運営の手動判断です）"
+    : "候補者のスコアが同点、またはタグ一致度が閾値未満です（LLM層停止中のため参考プレビューなし）";
 }
 
 const PRIORITY_LABEL: Record<string, string> = { high: "高", medium: "中", low: "低" };

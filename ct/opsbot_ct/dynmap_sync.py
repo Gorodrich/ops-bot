@@ -6,6 +6,10 @@ Dynmap配信ディレクトリへ画像配置・regions配列更新を行う（o
 decisions.md #53・phase-3-checklist.md C-5：Crafty File Manager API経由は非公開エンドポイント
 依存とTLS検証無効化の問題があったためSSH方式に切り替え済み）。
 
+decisions.md #63により、配置するマスク画像は単一の巨大PNGではなく、`dynmap_tiles.py`で
+分割したタイル群＋ホバー当たり判定用の縮小プレビュー1枚に変わった（Dynmapオーバーレイの
+軽量化）。image.pyのクロップ・+1補正ロジック自体は変更しない（ct/CLAUDE.md）。
+
 反映失敗時は例外を送出せず (False, message) を返し、呼び出し側（poller.py）が
 job_queue の失敗として扱う。再試行上限超過時の運営へのタスク起票はWorkers側
 （jobs/completion.ts）が既存の再試行上限ロジックと同様に行う。
@@ -19,6 +23,7 @@ import os
 from .config import Config
 from .dynmap_regions import remove_region_from_js, upsert_region_in_js
 from .dynmap_ssh import DynmapSSHClient, DynmapSSHError
+from .dynmap_tiles import build_preview_image, split_into_tiles, tile_filename
 
 log = logging.getLogger("opsbot_ct.dynmap_sync")
 
@@ -26,17 +31,36 @@ log = logging.getLogger("opsbot_ct.dynmap_sync")
 def sync_upsert(cfg: Config, client: DynmapSSHClient, *, mc_name: str, mask_local_path: str, loc1: dict, loc2: dict) -> None:
     with open(mask_local_path, "rb") as f:
         image_bytes = f.read()
-    client.write_image(mc_name, image_bytes)
+
+    tiles = split_into_tiles(image_bytes, loc1=loc1, loc2=loc2, tile_size=cfg.dynmap_tile_size)
+    if not tiles:
+        raise DynmapSSHError(f"マスク画像に不透明ピクセルが1つもありません（mc_name={mc_name}）")
+    for tile in tiles:
+        client.write_tile(mc_name, tile.row, tile.col, tile.image_bytes)
+
+    preview_bytes = build_preview_image(image_bytes)
+    client.write_preview(mc_name, preview_bytes)
 
     current = client.read_regions_js()
     if current is None:
         raise DynmapSSHError("regionsファイルがCT104側に存在しません（配置スクリプトの初期セットアップを確認）")
+
+    images_subdir = cfg.dynmap_images_subdir.strip("/")
+    tile_dicts = [
+        {
+            "image_rel_path": f"{images_subdir}/{mc_name}/{tile_filename(tile.row, tile.col)}",
+            "loc1": tile.loc1,
+            "loc2": tile.loc2,
+        }
+        for tile in tiles
+    ]
     updated = upsert_region_in_js(
         current,
         name=mc_name,
-        image_rel_path=f"{cfg.dynmap_images_subdir.strip('/')}/{mc_name}.png",
         loc1=loc1,
         loc2=loc2,
+        preview_url=f"{images_subdir}/{mc_name}/preview.png",
+        tiles=tile_dicts,
     )
     client.write_regions_js(updated)
 

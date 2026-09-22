@@ -20,6 +20,7 @@ import { enqueueJob, markFailedTerminal, type JobRow } from "../jobs/queue";
 import { getChannels, getJobRetrySetting, getLlmSetting, getTaskTargetDays, patchLlmSetting } from "../settings";
 import { sendChannelMessage, sendChannelMessageWithComponents, sendDirectMessage } from "../discord/rest";
 import { autoAssign } from "../tasks/autoAssign";
+import { tagMatchRatio } from "../tasks/assignment";
 import { getTask, insertDetectedTask } from "../tasks/repo";
 import { computeBotDefaultDueAt } from "../tasks/deadlines";
 import { buildCoSignUnavailableNote, buildLlmDetectedAssignedNoticeEmbed } from "../tasks/templates";
@@ -37,15 +38,24 @@ function nowIso(): string {
 
 interface DetectTasksJobPayload {
   subkind: "detect_tasks";
-  // messageScan.tsが積んだ元メッセージ（§7.1）。requester特定（Phase 7・T-B）のためだけに参照する。
-  messages?: Array<{ source_message_url: string; author_discord_id: string }>;
+  // messageScan.tsが積んだ元メッセージ（§7.1）。requester特定（Phase 7・T-B）・発言者除外／
+  // メンション先の優先ヒント（decisions.md #65是正）のためだけに参照する。
+  messages?: Array<{ source_message_url: string; author_discord_id: string; mentioned_discord_ids?: string[] }>;
 }
 
 interface TiebreakJobPayload {
   subkind: "assignment_tiebreak";
-  source_message_url: string;
+  // LLM検出パイプライン（detect_tasks）経由の場合のみ設定される。
+  source_message_url?: string;
+  // 通常タスク（/task add・自動起票T-A・辞退後再割当）経由の場合のみ設定される
+  // （autoAssign.ts の maybeEnqueueTaskTiebreakPreview）。この場合は「参考プレビュー」を
+  // 開発者DMへ送るのみで、実際のタスクの担当者欄は書き換えない。
+  task_id?: number;
+  task_title?: string;
   required_tags: string[];
-  candidates: Array<{ staff_id: string }>;
+  // tag_match/weak_match/is_mentionedは開発者DMプレビュー・LLMプロンプトへのヒント表示専用
+  // （decisions.md #65是正）。autoAssign.tsのハード決定（selectAssignment等）には使わない。
+  candidates: Array<{ staff_id: string; tag_match?: number; weak_match?: number; is_mentioned?: boolean }>;
 }
 
 interface DetectedTaskFromCt {
@@ -104,6 +114,8 @@ export interface LlmShadowDetectionRow {
   review_channel_id: string | null;
   review_message_id: string | null;
   created_at: string;
+  message_author_discord_id: string | null;
+  mentioned_staff_ids: string;
 }
 
 export async function getDetectionById(env: Env, id: number): Promise<LlmShadowDetectionRow | null> {
@@ -194,11 +206,20 @@ async function handleDetectTasksResult(env: Env, payload: DetectTasksJobPayload,
     const sourceChannelId = extractChannelId(t.source_message_url);
     const requesterId = t.type === "T-B" ? await resolveRequesterId(env, sourceChannelId, t.source_message_url, payload) : null;
 
+    // 検出元メッセージの発言者・本文中のメンション先（decisions.md #65是正：依頼者本人への
+    // 割当偏りを防ぐための除外、メンション先を優先候補ヒントとして扱うための取り込み）。
+    const messageEntry = payload.messages?.find((m) => m.source_message_url === t.source_message_url);
+    const speakerId = messageEntry?.author_discord_id ?? null;
+    const mentionedStaffIds: string[] = [];
+    for (const id of messageEntry?.mentioned_discord_ids ?? []) {
+      if (await getStaffById(env, id)) mentionedStaffIds.push(id);
+    }
+
     const insertRes = await env.DB.prepare(
       `INSERT OR IGNORE INTO llm_shadow_detections
          (source_message_url, type, title, summary, required_tags, suggested_priority, suggested_rule, confidence,
-          source_channel_id, requester_discord_id, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_assignment')`,
+          source_channel_id, requester_discord_id, status, message_author_discord_id, mentioned_staff_ids)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_assignment', ?, ?)`,
     )
       .bind(
         t.source_message_url,
@@ -211,6 +232,8 @@ async function handleDetectTasksResult(env: Env, payload: DetectTasksJobPayload,
         Math.max(0, Math.min(1, t.confidence)),
         sourceChannelId,
         requesterId,
+        speakerId,
+        JSON.stringify(mentionedStaffIds),
       )
       .run();
     if (!insertRes.meta.changes) continue; // 既に検出済み（source_message_urlのUNIQUE制約・§9冪等性）
@@ -226,12 +249,17 @@ async function handleDetectTasksResult(env: Env, payload: DetectTasksJobPayload,
       continue;
     }
 
-    const outcome = await autoAssign(env, {
-      requiredTags,
-      requiresTechnician: false,
-      requiredPermissionTier: null,
-      isControversial: requiredTags.includes("controversial_review"),
-    });
+    const outcome = await autoAssign(
+      env,
+      {
+        requiredTags,
+        requiresTechnician: false,
+        requiresDeveloper: false,
+        requiredPermissionTier: null,
+        isControversial: requiredTags.includes("controversial_review"),
+      },
+      speakerId ? [speakerId] : [],
+    );
 
     if (outcome.reason !== "tie_or_below_threshold") {
       if (shadowMode) {
@@ -250,11 +278,27 @@ async function handleDetectTasksResult(env: Env, payload: DetectTasksJobPayload,
       continue;
     }
 
-    const candidates: Array<{ staff_id: string; tags: string[]; notes: string | null }> = [];
+    const candidates: Array<{
+      staff_id: string;
+      tags: string[];
+      notes: string | null;
+      tag_match: number;
+      weak_match: number;
+      is_mentioned: boolean;
+    }> = [];
     for (const staffId of outcome.llmFallbackCandidateIds) {
       const staff = await getStaffById(env, staffId);
       if (!staff) continue;
-      candidates.push({ staff_id: staffId, tags: JSON.parse(staff.tags) as string[], notes: staff.notes });
+      const tags = JSON.parse(staff.tags) as string[];
+      const weakTags = JSON.parse(staff.weak_tags) as string[];
+      candidates.push({
+        staff_id: staffId,
+        tags,
+        notes: staff.notes,
+        tag_match: tagMatchRatio(requiredTags, tags),
+        weak_match: tagMatchRatio(requiredTags, weakTags),
+        is_mentioned: mentionedStaffIds.includes(staffId),
+      });
     }
 
     if (candidates.length === 0) {
@@ -292,6 +336,13 @@ async function handleTiebreakResult(env: Env, payload: TiebreakJobPayload, rawRe
   const selected = result?.selected_staff_id && validStaffIds.has(result.selected_staff_id) ? result.selected_staff_id : null;
   const note = sanitizePositiveNote(result?.positive_note ?? null);
 
+  if (payload.task_id) {
+    await notifyDeveloperOfTaskTiebreakPreview(env, payload.task_id, payload.task_title ?? "", payload.required_tags, payload.candidates, selected, note);
+    return;
+  }
+  if (!payload.source_message_url) throw new Error("assignment_tiebreak: task_id・source_message_urlのいずれも無いペイロードです");
+  const sourceMessageUrl = payload.source_message_url;
+
   const llmSetting = await getLlmSetting(env);
   const shadowMode = llmSetting.shadow_mode !== false;
 
@@ -301,7 +352,7 @@ async function handleTiebreakResult(env: Env, payload: TiebreakJobPayload, rawRe
          SET status = 'resolved', would_assign_primary = ?, would_assign_reason = 'llm_tiebreak', positive_note = ?
        WHERE source_message_url = ?`,
     )
-      .bind(selected, note, payload.source_message_url)
+      .bind(selected, note, sourceMessageUrl)
       .run();
     await notifyDeveloperOfPendingDetections(env);
     return;
@@ -324,7 +375,7 @@ async function handleTiebreakResult(env: Env, payload: TiebreakJobPayload, rawRe
 
   await materializeDetectedTask(
     env,
-    payload.source_message_url,
+    sourceMessageUrl,
     { primary: selected, coSigner, coSignRequiredButUnavailable },
     note,
   );
@@ -486,6 +537,52 @@ interface PendingNotificationRow {
   would_assign_reason: string | null;
   positive_note: string | null;
   source_message_url: string;
+}
+
+/**
+ * 通常タスク（/task add・自動起票T-A・辞退後再割当）で割当スコアが同点／閾値未満だった場合の
+ * LLM参考プレビュー（autoAssign.ts の maybeEnqueueTaskTiebreakPreview 経由）。実際のタスクの
+ * 担当者欄・通知は一切変更しない（運営チャンネルへの「手動対応依頼」通知と並行して届く）。
+ * §9と同じく通知は開発者DMにのみ行う。
+ */
+async function notifyDeveloperOfTaskTiebreakPreview(
+  env: Env,
+  taskId: number,
+  title: string,
+  requiredTags: string[],
+  candidates: Array<{ staff_id: string; tag_match?: number; weak_match?: number; is_mentioned?: boolean }>,
+  selected: string | null,
+  note: string | null,
+): Promise<void> {
+  const llmSetting = await getLlmSetting(env);
+  if (!llmSetting.developer_discord_id) return;
+
+  const requiredTagsLine = requiredTags.length > 0 ? `必要タグ：${requiredTags.join("、")}` : "必要タグ：（指定なし）";
+  const candidateLines = candidates.map((c) => {
+    const tagPct = c.tag_match !== undefined ? `${Math.round(c.tag_match * 100)}%` : "-";
+    const weakPct = c.weak_match !== undefined ? `${Math.round(c.weak_match * 100)}%` : "-";
+    const mentionMark = c.is_mentioned ? "（メッセージ内で名指しあり）" : "";
+    const pickMark = c.staff_id === selected ? "★選定" : "";
+    return `<@${c.staff_id}>：一致${tagPct}／weak一致${weakPct}${mentionMark} ${pickMark}`;
+  });
+
+  const assignLine = selected
+    ? `→ 割当プレビュー：<@${selected}>${note ? `（AI補足：${note}）` : ""}`
+    : "→ 割当プレビューなし（LLMが候補を選べませんでした）";
+
+  await sendDirectMessage(
+    env.DISCORD_BOT_TOKEN,
+    llmSetting.developer_discord_id,
+    [
+      "【LLM割当参考プレビュー（開発者にのみ通知・§9ドライラン相当）】",
+      "対象タスクは既に「候補者のスコアが同点／タグ一致度が閾値未満」のため運営チャンネルへ手動対応を依頼済みです。",
+      "このDMはLLMが参考として選ぶ候補の提示のみで、実際の担当者欄・通知は一切変更していません。",
+      `#${taskId} ${title}`,
+      requiredTagsLine,
+      candidateLines.join("\n"),
+      assignLine,
+    ].join("\n\n"),
+  ).catch((e) => console.error("task tiebreak preview DM failed", e));
 }
 
 /** シャドーモード：解決済み（resolved）で未通知のものをまとめて開発者DMへ送る（§9：通知は開発者にのみ）。 */

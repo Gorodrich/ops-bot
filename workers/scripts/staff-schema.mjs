@@ -59,6 +59,7 @@ export function validateStaffDoc(doc) {
     }
 
     req(typeof s.is_technician === "boolean", "is_technician は真偽値である必要があります");
+    req(typeof s.is_developer === "boolean", "is_developer は真偽値である必要があります");
     req(PERMISSION_TIERS.includes(s.discord_permission_tier),
       `discord_permission_tier は ${PERMISSION_TIERS.join("|")} のいずれか`);
     req(typeof s.requires_cosign === "boolean", "requires_cosign は真偽値である必要があります");
@@ -102,6 +103,7 @@ export function toInsertSql(doc) {
       q(JSON.stringify(s.tags)),
       q(JSON.stringify(s.weak_tags)),
       s.is_technician ? 1 : 0,
+      s.is_developer ? 1 : 0,
       q(s.discord_permission_tier),
       s.requires_cosign ? 1 : 0,
       s.max_concurrent,
@@ -115,13 +117,13 @@ export function toInsertSql(doc) {
     return `  (${vals})`;
   });
   return (
-    "INSERT INTO staff (discord_id, display_name, active, tags, weak_tags, is_technician,\n" +
+    "INSERT INTO staff (discord_id, display_name, active, tags, weak_tags, is_technician, is_developer,\n" +
     "  discord_permission_tier, requires_cosign, max_concurrent, active_hours, response_pattern,\n" +
     "  nudge_style, on_leave_active, on_leave_until, notes) VALUES\n" +
     rows.join(",\n") +
     "\nON CONFLICT(discord_id) DO UPDATE SET\n" +
     "  display_name=excluded.display_name, active=excluded.active, tags=excluded.tags,\n" +
-    "  weak_tags=excluded.weak_tags, is_technician=excluded.is_technician,\n" +
+    "  weak_tags=excluded.weak_tags, is_technician=excluded.is_technician, is_developer=excluded.is_developer,\n" +
     "  discord_permission_tier=excluded.discord_permission_tier, requires_cosign=excluded.requires_cosign,\n" +
     "  max_concurrent=excluded.max_concurrent, active_hours=excluded.active_hours,\n" +
     "  response_pattern=excluded.response_pattern, nudge_style=excluded.nudge_style,\n" +

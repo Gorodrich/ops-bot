@@ -57,23 +57,53 @@ def test_read_regions_js_raises_on_other_failure(monkeypatch):
         client.read_regions_js()
 
 
-def test_write_image_sends_bytes_on_stdin_with_validated_name(monkeypatch):
+def test_write_tile_sends_bytes_on_stdin_with_validated_name_and_coords(monkeypatch):
     fake = _fake_run(0)
     monkeypatch.setattr("opsbot_ct.dynmap_ssh.subprocess.run", fake)
 
     client = DynmapSSHClient(CFG)
-    client.write_image("Alice_1", b"\x89PNG...")
-    assert fake.last_cmd[-1] == "write-image Alice_1"
+    client.write_tile("Alice_1", 2, 3, b"\x89PNG...")
+    assert fake.last_cmd[-1] == "write-tile Alice_1 2 3"
     assert fake.last_input == b"\x89PNG..."
 
 
-def test_write_image_rejects_unsafe_name(monkeypatch):
+def test_write_tile_rejects_unsafe_name(monkeypatch):
     fake = _fake_run(0)
     monkeypatch.setattr("opsbot_ct.dynmap_ssh.subprocess.run", fake)
 
     client = DynmapSSHClient(CFG)
     with pytest.raises(DynmapSSHError):
-        client.write_image("../../etc/passwd", b"x")
+        client.write_tile("../../etc/passwd", 0, 0, b"x")
+    assert not hasattr(fake, "last_cmd")
+
+
+def test_write_tile_rejects_negative_coords(monkeypatch):
+    fake = _fake_run(0)
+    monkeypatch.setattr("opsbot_ct.dynmap_ssh.subprocess.run", fake)
+
+    client = DynmapSSHClient(CFG)
+    with pytest.raises(DynmapSSHError):
+        client.write_tile("Alice_1", -1, 0, b"x")
+    assert not hasattr(fake, "last_cmd")
+
+
+def test_write_preview_sends_bytes_on_stdin_with_validated_name(monkeypatch):
+    fake = _fake_run(0)
+    monkeypatch.setattr("opsbot_ct.dynmap_ssh.subprocess.run", fake)
+
+    client = DynmapSSHClient(CFG)
+    client.write_preview("Alice_1", b"\x89PNG...")
+    assert fake.last_cmd[-1] == "write-preview Alice_1"
+    assert fake.last_input == b"\x89PNG..."
+
+
+def test_write_preview_rejects_unsafe_name(monkeypatch):
+    fake = _fake_run(0)
+    monkeypatch.setattr("opsbot_ct.dynmap_ssh.subprocess.run", fake)
+
+    client = DynmapSSHClient(CFG)
+    with pytest.raises(DynmapSSHError):
+        client.write_preview("../../etc/passwd", b"x")
     assert not hasattr(fake, "last_cmd")
 
 

@@ -50,6 +50,9 @@ class Config:
     dynmap_web_relative_dir: str = "plugins/dynmap/web"
     dynmap_images_subdir: str = "images/indiv"
     dynmap_overlay_js_path: str = "js/custom_overlay.js"  # dynmap_web_relative_dir からの相対パス
+    # 個人開発領オーバーレイの軽量化（decisions.md #63）：1辺512pxのグリッドでタイル分割し、
+    # 全透明タイルは配信しない。ホバー判定用のプレビュー画像もタイルと同時に生成する。
+    dynmap_tile_size: int = 512
 
     # CT104へのSSH接続（Crafty API経由の非公開エンドポイント依存を避けるため採用・
     # phase-3-checklist.md C-5）。CT102→CT104方向のみ（§3.4.4）。
@@ -100,6 +103,7 @@ class Config:
             dynmap_web_relative_dir=opt("OPSBOT_DYNMAP_WEB_RELATIVE_DIR", "plugins/dynmap/web"),
             dynmap_images_subdir=opt("OPSBOT_DYNMAP_IMAGES_SUBDIR", "images/indiv"),
             dynmap_overlay_js_path=opt("OPSBOT_DYNMAP_OVERLAY_JS_PATH", "js/custom_overlay.js"),
+            dynmap_tile_size=int(opt("OPSBOT_DYNMAP_TILE_SIZE", "512")),
             dynmap_ssh_host=opt("OPSBOT_DYNMAP_SSH_HOST", ""),
             dynmap_ssh_port=int(opt("OPSBOT_DYNMAP_SSH_PORT", "22")),
             dynmap_ssh_user=opt("OPSBOT_DYNMAP_SSH_USER", "opsbot-dynmap"),

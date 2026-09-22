@@ -22,6 +22,7 @@ export interface TaskRow {
   requester: string | null;
   required_tags: string;
   requires_technician: number;
+  requires_developer: number;
   required_permission_tier: string | null;
   is_controversial: number;
   estimated_load: number | null;
@@ -42,14 +43,17 @@ export interface TaskRow {
 }
 
 export interface InsertTaskArgs {
+  type?: string;
+  relatedRule?: string | null;
   title: string;
   summary: string | null;
   assignee: string | null;
   coSigner: string | null;
   priority: "high" | "medium" | "low";
-  createdBy: string;
+  createdBy: string | null;
   requiredTags: string[];
   requiresTechnician: boolean;
+  requiresDeveloper: boolean;
   requiredPermissionTier: PermissionTier | null;
   isControversial: boolean;
   estimatedLoad: number | null;
@@ -62,13 +66,15 @@ export async function insertManualTask(env: Env, args: InsertTaskArgs): Promise<
   const res = await env.DB.prepare(
     `INSERT INTO tasks (
        type, title, summary, related_rule, status, priority, assignee, co_signer,
-       requester, required_tags, requires_technician, required_permission_tier,
+       requester, required_tags, requires_technician, requires_developer, required_permission_tier,
        is_controversial, estimated_load, due_at, deadline_source, created_at, assigned_at
-     ) VALUES ('T-C', ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
+      args.type ?? "T-C",
       args.title,
       args.summary,
+      args.relatedRule ?? null,
       status,
       args.priority,
       args.assignee,
@@ -76,6 +82,7 @@ export async function insertManualTask(env: Env, args: InsertTaskArgs): Promise<
       args.createdBy,
       JSON.stringify(args.requiredTags),
       args.requiresTechnician ? 1 : 0,
+      args.requiresDeveloper ? 1 : 0,
       args.requiredPermissionTier,
       args.isControversial ? 1 : 0,
       args.estimatedLoad,

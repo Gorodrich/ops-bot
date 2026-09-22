@@ -97,3 +97,30 @@ def test_run_assignment_tiebreak_job_missing_field_raises(monkeypatch):
     monkeypatch.setattr(llm_module, "_invoke_claude_headless", lambda *a, **kw: ("{}", {}))
     with pytest.raises(LlmError):
         run_assignment_tiebreak_job({"candidates": [{"staff_id": "111"}]}, cli_path="claude", model="sonnet", timeout_sec=30)
+
+
+def test_run_assignment_tiebreak_job_includes_tag_match_and_mention_hints(monkeypatch):
+    # decisions.md #65是正：tag_match/weak_match/is_mentionedの説明文と候補データがプロンプトに
+    # 含まれること（開発者への偏りを防ぐための宛先メンションヒントが実際に渡っているかの確認）。
+    captured = {}
+
+    def fake_invoke(prompt, *, cli_path, model, timeout_sec):
+        captured["prompt"] = prompt
+        return '{"selected_staff_id": "222", "positive_note": null}', {"model": model}
+
+    monkeypatch.setattr(llm_module, "_invoke_claude_headless", fake_invoke)
+    run_assignment_tiebreak_job(
+        {
+            "required_tags": ["community_management"],
+            "candidates": [
+                {"staff_id": "111", "tags": [], "notes": None, "tag_match": 0.0, "weak_match": 0.0, "is_mentioned": False},
+                {"staff_id": "222", "tags": ["community_management"], "notes": None, "tag_match": 1.0, "weak_match": 0.0, "is_mentioned": True},
+            ],
+        },
+        cli_path="claude",
+        model="sonnet",
+        timeout_sec=30,
+    )
+    assert "is_mentioned" in captured["prompt"]
+    assert "tag_match" in captured["prompt"]
+    assert '"staff_id": "222"' in captured["prompt"]

@@ -91,6 +91,7 @@ async function reassignOnEscalation(env: Env, task: TaskRow, uneiChannelId: stri
     {
       requiredTags,
       requiresTechnician: task.requires_technician === 1,
+      requiresDeveloper: task.requires_developer === 1,
       requiredPermissionTier: (task.required_permission_tier as PermissionTier) || null,
       isControversial: task.is_controversial === 1,
     },

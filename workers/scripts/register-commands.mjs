@@ -324,6 +324,7 @@ const commands = [
           { type: OPTION_TYPE.STRING, name: "tag_2", description: "必要タグ2（§4.4・任意）", required: false, choices: REQUIRED_TAG_CHOICES },
           { type: OPTION_TYPE.STRING, name: "tag_3", description: "必要タグ3（§4.4・任意）", required: false, choices: REQUIRED_TAG_CHOICES },
           { type: OPTION_TYPE.BOOLEAN, name: "requires_technician", description: "技術者（OP保持者）限定か（既定：false）", required: false },
+          { type: OPTION_TYPE.BOOLEAN, name: "requires_developer", description: "管理者/開発者専用か（サーバーインフラ・Bot設定変更等。上限を無視して強制割当・共同確認スキップ。既定：false）", required: false },
           { type: OPTION_TYPE.STRING, name: "required_permission_tier", description: "必要な実行権限レベル（§4.5.1・任意）", required: false, choices: PERMISSION_TIER_CHOICES },
           { type: OPTION_TYPE.BOOLEAN, name: "controversial", description: "論争性の高いタスクか（§4.5.1：共同確認者を自動追加）", required: false },
           { type: OPTION_TYPE.INTEGER, name: "estimated_load", description: "想定負荷（1〜5・任意）", required: false, min_value: 1, max_value: 5 },

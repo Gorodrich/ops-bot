@@ -21,6 +21,7 @@ export interface AssignmentCandidate {
   tags: string[];
   weakTags: string[];
   isTechnician: boolean;
+  isDeveloper: boolean;
   permissionTier: PermissionTier;
   maxConcurrent: number;
   currentLoad: number;

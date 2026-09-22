@@ -10,6 +10,7 @@ const base = () => ({
       tags: ["technical"],
       weak_tags: ["moderation"],
       is_technician: true,
+      is_developer: false,
       discord_permission_tier: "admin",
       requires_cosign: false,
       max_concurrent: 3,

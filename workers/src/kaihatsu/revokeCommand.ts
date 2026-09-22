@@ -11,6 +11,7 @@ import { writeAuditLog } from "../auditLog";
 import { sendDirectMessage } from "../discord/rest";
 import { buildRevokedNoticeEmbed, REVOKE_BUTTON_CUSTOM_ID_PREFIX, REVOKE_MODAL_CUSTOM_ID_PREFIX, REVOKE_REASON_FIELD_ID } from "./templates";
 import type { DeferredResult } from "../accountLinks/authoriseCommand";
+import { issueSystemTask } from "../tasks/autoIssue";
 
 const EPHEMERAL_FLAG = 1 << 6;
 
@@ -105,15 +106,16 @@ export async function handleRevokeModalSubmit(env: Env, interaction: Interaction
         .bind(application.id, actorId, reason)
         .run();
 
-      await env.DB.prepare(
-        `INSERT INTO tasks (type, title, summary, related_rule, status, priority, created_at)
-         VALUES ('T-A', ?, ?, '§5.7.2', 'unassigned', 'high', strftime('%Y-%m-%dT%H:%M:%SZ','now'))`,
-      )
-        .bind(
-          `個人開発領の撤回後の手動審査：${application.owner_mc_name ?? application.requester}`,
-          `運営(<@${actorId}>)により撤回されました（理由：${reason}）。内容を確認のうえ、類型A秘密投票（§5.2）で最終決定してください。`,
-        )
-        .run();
+      await issueSystemTask(env, {
+        title: `個人開発領の撤回後の手動審査：${application.owner_mc_name ?? application.requester}`,
+        summary: `運営(<@${actorId}>)により撤回されました（理由：${reason}）。内容を確認のうえ、類型A秘密投票（§5.2）で最終決定してください。`,
+        relatedRule: "§5.7.2",
+        priority: "high",
+        requiredTags: ["controversial_review"],
+        requiresDeveloper: false,
+        // 撤回操作を行った本人が事後対応タスクの担当者にならないよう除外する（decisions.md #65是正）。
+        triggeredBy: actorId,
+      });
 
       if (application.owner_mc_name) {
         await enqueueJob(env, "dynmap_sync", { op: "remove", mc_name: application.owner_mc_name }).catch(() => {});

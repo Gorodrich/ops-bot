@@ -249,6 +249,10 @@ Cloudflare Workers Free枠の上限（アカウント全体で5件）のため�
    重みは`settings.assignment_weights`（w1, w1_prime, w2, w3, w4, w5, tag_match_threshold, consecutive_assign_limit）。
 3. 同点、または全候補がタグ一致度閾値未満の場合は`llmFallbackCandidateIds`（スコア上位5件）をLLM層のタイブレークに委ねる（C-1の例外＝機械的に一意に決められない場合のみLLMを使う）。
 
+### 6.1.1 管理者/開発者専用タスク（`requires_developer`・`docs/decisions.md` #64）
+
+`autoAssign.ts`：`requires_developer: true`のタスクは上記のハード条件・スコアリングを適用せず、`is_developer: true`（staffプロファイル側の属性）の候補に`max_concurrent`の上限判定を無視して強制割当する（複数候補がいる場合は現在の未完了負荷最小の者。`on_leave`も無視）。候補が1人もいなければ`no_eligible`として通常どおり手動対応依頼に落ちる。共同確認（§6.2）は常にスキップする。通常タスクの`max_concurrent`到達判定には、この経路で割当済みの件数も`getCurrentLoad`経由で合算される。
+
 ### 6.2 共同確認（`requires_cosign`）
 
 `autoAssign.ts`：`requires_cosign`（staffプロファイル側の属性）、または`/task add controversial:true`、または`controversial_review`タグが絡む場合、次点候補者を共同確認者として自動追加する（§4.5.1）。`done`は担当者・共同確認者の両方の完了操作が揃って初めて完了になる（`recordCompletion`）。
@@ -340,7 +344,7 @@ Phase 7完了時点で`shadow_mode: true`のまま。§9のドライラン（最
 
 `rule_drafting` / `technical` / `participant_support` / `moderation` / `community_management` / `announcement` / `survey` / `controversial_review` / `data_handling`
 
-staff1行のフィールド：`discord_id` / `display_name` / `active` / `tags`（TAG_VOCABのみ） / `weak_tags`（TAG_VOCABのみ・`tags`との重複禁止） / `is_technician` / `discord_permission_tier`（`admin` | `broad` | `standard`） / `requires_cosign` / `max_concurrent` / `active_hours`（`days`/`from`/`to`の配列） / `response_pattern`（`fast` | `normal` | `slow` | `deadline_driven`） / `nudge_style`（`gentle` | `standard` | `firm`） / `on_leave`（`active`/`until`） / `notes`（機械層は読まない自由記述）
+staff1行のフィールド：`discord_id` / `display_name` / `active` / `tags`（TAG_VOCABのみ） / `weak_tags`（TAG_VOCABのみ・`tags`との重複禁止） / `is_technician` / `is_developer`（管理者/開発者専用タスクの強制割当先か。§6.1.1・`docs/decisions.md` #64） / `discord_permission_tier`（`admin` | `broad` | `standard`） / `requires_cosign` / `max_concurrent` / `active_hours`（`days`/`from`/`to`の配列） / `response_pattern`（`fast` | `normal` | `slow` | `deadline_driven`） / `nudge_style`（`gentle` | `standard` | `firm`） / `on_leave`（`active`/`until`） / `notes`（機械層は読まない自由記述）
 
 ---
 
