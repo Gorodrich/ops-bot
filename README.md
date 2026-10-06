@@ -413,7 +413,7 @@ sudo -u opsbot claude login
 
 ```
 OPSBOT_ANTHROPIC_CLI_PATH=claude
-OPSBOT_ANTHROPIC_MODEL=sonnet
+OPSBOT_ANTHROPIC_MODEL=claude-sonnet-5-5
 OPSBOT_CLAUDE_TIMEOUT_SEC=120
 OPSBOT_RULES_DIR=            # 根拠条文の抜粋に使うMarkdownディレクトリ。未設定でも動作する
 ```
