@@ -18,7 +18,7 @@
 import type { Env } from "../env";
 import { enqueueJob, markFailedTerminal, type JobRow } from "../jobs/queue";
 import { getChannels, getJobRetrySetting, getLlmSetting, getTaskTargetDays, patchLlmSetting } from "../settings";
-import { sendChannelMessage, sendChannelMessageWithComponents, sendDirectMessage } from "../discord/rest";
+import { neutralizeMentions, sendChannelMessage, sendChannelMessageWithComponents, sendDirectMessage } from "../discord/rest";
 import { autoAssign } from "../tasks/autoAssign";
 import { tagMatchRatio } from "../tasks/assignment";
 import { getTask, insertDetectedTask } from "../tasks/repo";
@@ -224,7 +224,9 @@ async function handleDetectTasksResult(env: Env, payload: DetectTasksJobPayload,
       .bind(
         t.source_message_url,
         t.type,
-        t.title.slice(0, 40),
+        // タスク名は運営チャンネルの本文（督促・要対応通知等）に埋め込まれるため、参加者のチケット本文に
+        // 由来するメンション記法をここで無害化しておく（監査指摘・2026-10-07）。
+        neutralizeMentions(t.title.slice(0, 40)),
         t.summary.slice(0, 200),
         JSON.stringify(requiredTags),
         t.suggested_priority ?? null,
