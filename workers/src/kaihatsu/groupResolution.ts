@@ -13,7 +13,7 @@ import { sendChannelMessage, sendDirectMessage } from "../discord/rest";
 import { writeAuditLog } from "../auditLog";
 import { resolveGroup, orderGroupMembersForEvaluation, type GroupMemberStatus } from "./domain";
 import { listApplicationsByGroup, resolveGroupStatus, type ApplicationRow } from "./repo";
-import { finalizeApprovedDelete, finalizeApprovedSet, releaseHoldsForResolvedGroup } from "./phase3";
+import { finalizeApprovedDelete, finalizeApprovedSet, releaseHoldsForResolvedApplication, releaseHoldsForResolvedGroup } from "./phase3";
 import { buildGroupRejectedEmbed, buildProvisionalWithdrawnOrExpiredEmbed } from "./templates";
 
 function safeJsonParse<T>(text: string): T | null {
@@ -85,6 +85,12 @@ async function rejectGroup(env: Env, groupKey: string, members: ApplicationRow[]
     await sendChannelMessage(env.DISCORD_BOT_TOKEN, channels.kaihatsu_ryo, content, [embed]).catch(() => {});
   }
 
+  // 仮承認中のset側メンバーは、他者の届出から application 単位（held_blocking_application_id）で
+  // 保留の原因として参照されうる（phase3.ts の重複候補プール）。グループ単位の解放だけでは
+  // それらが held のまま残るため、メンバーごとにも解放する（監査指摘・2026-10-07）。
+  for (const m of members) {
+    if (m.op === "set") await releaseHoldsForResolvedApplication(env, m.id, "released");
+  }
   await releaseHoldsForResolvedGroup(env, groupKey, "released");
 }
 

@@ -6,6 +6,7 @@ import type { Env } from "../env";
 import { isPastDeadline } from "../kaihatsu/domain";
 import { handleWithdrawOrExpire } from "../kaihatsu/confirmCommand";
 import { tryResolveGroup } from "../kaihatsu/groupResolution";
+import { releaseOrphanedHolds } from "../kaihatsu/phase3";
 import { listApplicationsByGroup, listFinalizedGroupsPastDeadline, listProvisionalApplicationsPastDeadline } from "../kaihatsu/repo";
 
 export async function processPhase3Deadlines(env: Env): Promise<void> {
@@ -26,4 +27,7 @@ export async function processPhase3Deadlines(env: Env): Promise<void> {
     }
     await tryResolveGroup(env, group.group_key);
   }
+
+  // 解放漏れの保留のバックストップ（保留の原因が既に解消済みのもの）。
+  await releaseOrphanedHolds(env);
 }
