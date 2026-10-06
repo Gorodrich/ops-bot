@@ -1,0 +1,15 @@
+# /etc/systemd/system/opsbot-claude-update.timer
+# 毎週月曜04:00（CT102のローカル時刻）にopsbot-claude-update.serviceを起動する。
+# 毎日07:59〜08:15のポーラー停止時間帯（opsbot-ct-poller-pause/resume）を避けている。
+# Persistent=trueにより、CT102停止中で発火し損ねた場合は起動後に取りこぼしを実行する。
+
+[Unit]
+Description=Weekly update of Claude Code CLI
+
+[Timer]
+OnCalendar=Mon *-*-* 04:00:00
+RandomizedDelaySec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
