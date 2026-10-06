@@ -8,7 +8,7 @@ import type { Env } from "../env";
 import { isPastDeadline } from "../kaihatsu/domain";
 import { handleWithdrawOrExpire } from "../kaihatsu/confirmCommand";
 import { collectingGroupExpiresAt, tryResolveGroup } from "../kaihatsu/groupResolution";
-import { releaseOrphanedHolds } from "../kaihatsu/phase3";
+import { releaseHoldsForResolvedApplication, releaseOrphanedHolds } from "../kaihatsu/phase3";
 import {
   listApplicationsByGroup,
   listCollectingGroups,
@@ -50,6 +50,19 @@ export async function processPhase3Deadlines(env: Env): Promise<void> {
       continue;
     }
     await tryResolveGroup(env, group.group_key);
+  }
+
+  // 防御的措置：グループが既に確定（成立・却下）済みなのに provisional のまま期限を過ぎたメンバーは、
+  // 上の2経路（非グループ／finalized グループ）のどちらにも拾われず残り続けるため、ここで期限切れにする。
+  const orphanedGroupMembers = await env.DB.prepare(
+    `SELECT a.id FROM applications a JOIN application_groups g ON g.group_key = a.group_key
+     WHERE a.status = 'provisional' AND a.provisional_until IS NOT NULL AND a.provisional_until <= ? AND g.status != 'finalized'`,
+  )
+    .bind(nowIso)
+    .all<{ id: number }>();
+  for (const { id } of orphanedGroupMembers.results ?? []) {
+    const res = await env.DB.prepare("UPDATE applications SET status = 'expired' WHERE id = ? AND status = 'provisional'").bind(id).run();
+    if ((res.meta.changes ?? 0) === 1) await releaseHoldsForResolvedApplication(env, id, "released");
   }
 
   // 解放漏れの保留のバックストップ（保留の原因が既に解消済みのもの）。

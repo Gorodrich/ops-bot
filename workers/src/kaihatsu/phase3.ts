@@ -144,20 +144,27 @@ interface CtSetResult {
   overlap_pending?: Array<{ owner_name: string; pixels: number; ref_type: string | null; ref_id: number | string | null }>;
 }
 
-/** 仮承認へ遷移させる（§5.7.3：72時間の本人確認待ち）。 */
+/**
+ * 仮承認へ遷移させる（§5.7.3：72時間の本人確認待ち）。
+ * CT評価の投入時点の状態（expectedStatus：一括申請は processing、グループは collecting）のままの行に対してのみ
+ * 成立させ、成立した場合のみ true を返す。評価中に取り下げ・グループ却下等で既に結論が出た届出を、
+ * 遅れて届いた評価結果で仮承認へ戻さないため（監査指摘・2026-10-07）。
+ */
 export async function markProvisional(
   env: Env,
   application: ApplicationRow,
   result: CtSetResult,
   previousClaimId: number | null,
-): Promise<void> {
+  expectedStatus: "processing" | "collecting",
+): Promise<boolean> {
   const deadlines = await getDeadlines(env);
   const provisionalUntil = addHoursIso(new Date().toISOString().replace(/\.\d{3}Z$/, "Z"), deadlines.provisional_confirm_hours);
-  await env.DB.prepare(
-    "UPDATE applications SET status = 'provisional', provisional_until = ?, payload = ? WHERE id = ?",
+  const res = await env.DB.prepare(
+    "UPDATE applications SET status = 'provisional', provisional_until = ?, payload = ? WHERE id = ? AND status = ?",
   )
-    .bind(provisionalUntil, JSON.stringify({ ctResult: result, previousClaimId }), application.id)
+    .bind(provisionalUntil, JSON.stringify({ ctResult: result, previousClaimId }), application.id, expectedStatus)
     .run();
+  return (res.meta.changes ?? 0) === 1;
 }
 
 /** CTが held を返した場合の保留登録＋通知（§5.7.5）。 */
