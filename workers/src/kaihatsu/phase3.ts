@@ -20,6 +20,7 @@ import {
   listAllProvisionalApplications,
   listProtectedAreas,
   markApplicationHeld,
+  transitionApplicationStatus,
   setHeldBlockingApplication,
   clearHeldBlocking,
   supersedeClaim,
@@ -200,20 +201,34 @@ export async function finalizeApprovedSet(
 ): Promise<void> {
   if (result.outcome !== "approved") return;
 
-  if (previousClaimId) {
-    await supersedeClaim(env, previousClaimId, "superseded");
-  }
+  // 先に approved への遷移に勝ってから claim を登録する。単独申請は processing、本人確認を経たものは
+  // confirmed から遷移する。同じ届出に対する2回目の確定（同時の確認操作・グループ確定の重複・
+  // 遅延したCT完了報告）はここで負けて何もしない（監査指摘・2026-10-07）。
+  const fromStatuses = ["processing", "confirmed"];
+  if (!(await transitionApplicationStatus(env, application.id, fromStatuses, "approved"))) return;
+
   const ownerUuid = application.owner_mc_uuid ?? "";
   const ownerName = application.owner_mc_name ?? "";
-  const claimId = await insertClaim(env, {
-    ownerUuid,
-    ownerMcName: ownerName,
-    maskRef: result.mask_saved_path ?? "",
-    areaBlocks: result.area_blocks ?? 0,
-    loc1: result.loc1 ?? { x: 0, y: 64, z: 0 },
-    loc2: result.loc2 ?? { x: 0, y: 64, z: 0 },
-    applicationId: application.id,
-  });
+  let claimId: number;
+  try {
+    if (previousClaimId) {
+      await supersedeClaim(env, previousClaimId, "superseded");
+    }
+    claimId = await insertClaim(env, {
+      ownerUuid,
+      ownerMcName: ownerName,
+      maskRef: result.mask_saved_path ?? "",
+      areaBlocks: result.area_blocks ?? 0,
+      loc1: result.loc1 ?? { x: 0, y: 64, z: 0 },
+      loc2: result.loc2 ?? { x: 0, y: 64, z: 0 },
+      applicationId: application.id,
+    });
+  } catch (e) {
+    // claim登録に失敗した（1所有者1アクティブclaimの一意制約違反など）場合は、承認済みのまま
+    // claim のない届出を残さないよう元の状態へ戻して運営の確認に回す。
+    await env.DB.prepare("UPDATE applications SET status = ? WHERE id = ? AND status = 'approved'").bind(application.status, application.id).run();
+    throw e;
+  }
 
   const deadlines = await getDeadlines(env);
   const nowIso = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
@@ -281,6 +296,7 @@ export async function finalizeApprovedSet(
 /** 正式承認の確定（delete系・グループ内のdelete／代表者による他者delete）。 */
 export async function finalizeApprovedDelete(env: Env, application: ApplicationRow): Promise<void> {
   if (!application.target_claim_id) return;
+  if (!(await transitionApplicationStatus(env, application.id, ["confirmed"], "approved"))) return;
   const claim = await getClaim(env, application.target_claim_id);
   await supersedeClaim(env, application.target_claim_id, "deleted");
 
