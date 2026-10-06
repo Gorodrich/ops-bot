@@ -1,0 +1,12 @@
+# /etc/systemd/system/dynmap-deploy-update.timer（CT104）
+
+[Unit]
+Description=Check GitHub deploy branch for dynmap_deploy.sh every 5 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+RandomizedDelaySec=30
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,13 @@
+# /etc/systemd/system/opsbot-ct-deploy.timer
+# 5分おきに deploy ブランチを確認する。新しいコミットが無ければ fetch だけで終わる。
+
+[Unit]
+Description=Check GitHub deploy branch for OpsBot CT layer every 5 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+RandomizedDelaySec=30
+
+[Install]
+WantedBy=timers.target

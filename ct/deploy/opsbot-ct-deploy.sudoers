@@ -1,0 +1,4 @@
+# /etc/sudoers.d/opsbot-ct-deploy （配置：sudo install -m 0440 opsbot-ct-deploy.sudoers /etc/sudoers.d/opsbot-ct-deploy
+#                                   確認：sudo visudo -cf /etc/sudoers.d/opsbot-ct-deploy）
+# 自動デプロイ用ユーザーに許す root 権限は poller の再起動だけ。
+opsbot-deploy ALL=(root) NOPASSWD: /usr/bin/systemctl restart opsbot-ct-poller

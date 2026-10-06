@@ -37,6 +37,7 @@ Discord上で発生する運営タスクを台帳化して担当者を自動割�
   - [コマンド](#コマンド)
   - [開発上の原則](#開発上の原則)
 - [運用](#運用)
+  - [自動デプロイ（GitHub の deploy ブランチ）](#自動デプロイgithub-の-deploy-ブランチ)
   - [CT層の定期メンテナンス時間帯の自動停止](#ct層の定期メンテナンス時間帯の自動停止)
   - [トラブルシューティング](#トラブルシューティング)
 - [ドキュメント](#ドキュメント)
@@ -369,7 +370,7 @@ sudo systemctl status opsbot-ct-poller       # active、ログにポーリング
 
 **方式**：配信ホストへの**制限付きSSH**（強制コマンド）。Crafty の File Manager API は、読み取り用エンドポイントが公式ドキュメントに記載のない非公開実装であること、および API トークンの FILES 権限が対象サーバーの全ファイルに及び最小権限の原則に反することから採用していない。
 
-配信ホスト側には [`ct/deploy/dynmap_deploy.sh`](ct/deploy/dynmap_deploy.sh) を配置し、専用ユーザーの `authorized_keys` に `command=` 付きで登録する（スクリプト冒頭に手順がある）。これにより CT層から実行できる操作は「配信ディレクトリへの画像配置・regions.js 更新」のみに限定され、Minecraft サーバープロセスには触れない。**スクリプト冒頭の `DYNMAP_WEB_DIR` は配置先に合わせて必ず書き換えること。**
+配信ホスト側には [`ct/deploy/dynmap_deploy.sh`](ct/deploy/dynmap_deploy.sh) を配置し、専用ユーザーの `authorized_keys` に `command=` 付きで登録する（スクリプト冒頭に手順がある）。これにより CT層から実行できる操作は「配信ディレクトリへの画像配置・regions.js 更新」のみに限定され、Minecraft サーバープロセスには触れない。配信先のディレクトリは環境ごとに異なるため、スクリプトには書かず `/etc/opsbot/dynmap_deploy.conf` に置く（[`ct/deploy/dynmap_deploy.conf.example`](ct/deploy/dynmap_deploy.conf.example)）。配置後のスクリプト更新は [自動デプロイ](#自動デプロイgithub-の-deploy-ブランチ) で行う。
 
 ```bash
 # CT層側：SSH鍵ペアを生成（秘密鍵はこのホストの外に出さない）
@@ -547,6 +548,101 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 設計上の絶対制約 C-1〜C-7 の全文は [`docs/specification.md`](docs/specification.md) §0 を参照。
 
 ## 運用
+
+### 自動デプロイ（GitHub の deploy ブランチ）
+
+`deploy` ブランチへのマージを合図に、Workers・CT102・CT104 がそれぞれ自動で更新される。CT へは外から一切接続しない（CT 側が5分おきに GitHub を取りに行くプル型・§11-8）。
+
+```
+main で開発 → PR（main → deploy）→ CI（ct-test / workers-test）が通ればマージ
+  ├─ Workers：GitHub Actions（deploy-workers.yml）が D1 マイグレーション適用 → wrangler deploy
+  ├─ CT102 ：opsbot-ct-deploy.timer が取得 → /opt/opsbot/ct へ反映 → 再起動 → 起動確認（失敗なら復元）
+  └─ CT104 ：dynmap-deploy-update.timer が dynmap_deploy.sh だけを取得 → 検証 → 差し替え
+結果はすべて Discord Webhook に通知される。
+```
+
+| 対象 | 実行者 | 自動で反映されるもの | 手作業が必要なもの |
+|---|---|---|---|
+| Workers | GitHub Actions（Environment `production`） | `workers/` のコード、D1 マイグレーション | スラッシュコマンド定義の変更（`npm run commands:register`。通知で知らせる）、`wrangler secret` |
+| CT102 | `opsbot-deploy` ユーザー（root ではない） | `ct/` のコード、依存（`pyproject.toml` 変更時に `pip install`） | `ct/deploy/` 配下（systemd ユニット等。通知で知らせる）、`/etc/opsbot/*` |
+| CT104 | root（取得したファイルは実行しない） | `ct/deploy/dynmap_deploy.sh` | `/etc/opsbot/dynmap_deploy.conf` |
+
+**権限の考え方**：deploy ブランチに書ける人＝本番を動かせる人になるため、GitHub アカウントの2FAとブランチ保護を必須とする。CT102 では、取得・`pip install` を root ではない `opsbot-deploy` で行い、root 権限は poller の再起動1コマンドだけを sudoers で許可する。poller を動かす `opsbot` はコードを読めるが書けない。各ホストの更新スクリプト自体（`/usr/local/bin/opsbot-ct-deploy` 等）は自動更新しない（変更時は手作業で入れ直す）。
+
+**CT102 と CT104 の間のやり取り（`dynmap_deploy.sh` のサブコマンド）を変えるとき**：両ホストの更新タイミングは最大数分ずれるため、まず新しいサブコマンドを「追加」し、旧サブコマンドは両方の更新を確認してから次の変更で削除する。切り替わりの数分間に失敗したジョブは既存の再試行で回復する。
+
+#### 初回導入：GitHub
+
+1. アカウントの2FAを有効にする（Settings → Password and authentication）。
+2. `main` から `deploy` ブランチを作る（リポジトリトップのブランチ選択 → `deploy` と入力 → Create branch deploy from main）。
+3. ルールセットで `deploy` を保護する（Settings → Rules → Rulesets → New ruleset → New branch ruleset）。
+   - Ruleset name：`deploy`、Enforcement status：**Active**
+   - Bypass list：空のまま（自分も含め、誰も規則を飛ばせないようにする）
+   - Target branches：Add target → Include by pattern → `deploy`
+   - Rules：**Restrict deletions**／**Block force pushes**／**Require a pull request before merging**（Required approvals は 0）／**Require status checks to pass** → Add checks で `ct-test` と `workers-test` を追加
+4. Environment を作る（Settings → Environments → New environment → `production`）。
+   - Deployment branches and tags：**Selected branches and tags** → `deploy` を追加
+   - Environment secrets：`CLOUDFLARE_API_TOKEN`／`CLOUDFLARE_ACCOUNT_ID`／`DISCORD_DEPLOY_WEBHOOK_URL`
+5. Cloudflare の API トークンを作る（ダッシュボード → My Profile → API Tokens → Create Token → テンプレート「Edit Cloudflare Workers」）。Permissions に **Account → D1 → Edit** を追加し、Account Resources を自分のアカウントだけに絞る。Account ID は Workers & Pages の概要画面右側に表示される。
+6. 公開リポジトリのため、外部からのPRで勝手に Actions が動かないようにする（Settings → Actions → General → Fork pull request workflows from outside collaborators → **Require approval for all outside collaborators**）。
+
+#### 初回導入：CT102
+
+docker ユーザーの `~/ops-bot`（`ct/` のみの sparse-checkout）を最新にしてから実行する。以後、手作業の rsync は行わない。
+
+```bash
+cd ~/ops-bot && git pull --ff-only
+
+# 自動デプロイ専用ユーザー（ログイン不可）
+sudo useradd -r -m -d /var/lib/opsbot-deploy -s /usr/sbin/nologin opsbot-deploy
+
+# コードと .venv は opsbot-deploy の所有に、Bot が書く work/ だけは opsbot のままにする
+sudo chown -R opsbot-deploy:opsbot-deploy /opt/opsbot/ct
+sudo chown -R opsbot:opsbot /opt/opsbot/ct/work
+sudo chmod -R go+rX,go-w /opt/opsbot/ct
+
+# 更新スクリプト（root 所有・自動更新しない）・sudoers・設定
+sudo install -o root -g root -m 0755 ct/deploy/opsbot-ct-deploy.sh /usr/local/bin/opsbot-ct-deploy
+sudo install -o root -g root -m 0440 ct/deploy/opsbot-ct-deploy.sudoers /etc/sudoers.d/opsbot-ct-deploy
+sudo visudo -cf /etc/sudoers.d/opsbot-ct-deploy        # "parsed OK" を確認
+sudo install -o root -g root -m 0600 ct/deploy/deploy.env.example /etc/opsbot/deploy.env
+sudo nano /etc/opsbot/deploy.env                         # Webhook URL を記入
+
+sudo cp ct/deploy/opsbot-ct-deploy.service ct/deploy/opsbot-ct-deploy.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl start opsbot-ct-deploy                    # 初回は手動で実行して結果を確認
+journalctl -u opsbot-ct-deploy -n 30 --no-pager
+sudo systemctl enable --now opsbot-ct-deploy.timer
+```
+
+今すぐ反映したいときは `sudo systemctl start opsbot-ct-deploy`。一度失敗して復元したコミットは、新しいコミットが来るまで再試行しない。定期メンテナンスで poller が止まっている間はファイルだけ更新し、再起動はしない（再開時に反映される）。
+
+#### 初回導入：CT104
+
+```bash
+# 配信先の設定を、現行スクリプトに書かれている値から設定ファイルへ移す
+sudo mkdir -p /etc/opsbot
+sudo grep -E '^(DYNMAP_WEB_DIR|IMAGES_SUBDIR|REGIONS_JS_PATH)=' /opt/opsbot/dynmap_deploy.sh \
+  | sudo tee /etc/opsbot/dynmap_deploy.conf
+sudo chown root:root /etc/opsbot/dynmap_deploy.conf && sudo chmod 0644 /etc/opsbot/dynmap_deploy.conf
+ls -ld /opt/opsbot                                       # root 所有で opsbot-dynmap が書き込めないこと
+
+# 更新スクリプトと timer（root 所有・更新スクリプト自体は自動更新しない）
+base=https://raw.githubusercontent.com/Gorodrich/ops-bot/deploy/ct/deploy
+sudo curl -fsSLo /usr/local/sbin/dynmap-deploy-update "$base/dynmap-deploy-update.sh"
+sudo chmod 0755 /usr/local/sbin/dynmap-deploy-update
+sudo curl -fsSLo /etc/systemd/system/dynmap-deploy-update.service "$base/dynmap-deploy-update.service"
+sudo curl -fsSLo /etc/systemd/system/dynmap-deploy-update.timer "$base/dynmap-deploy-update.timer"
+echo 'OPSBOT_DEPLOY_DISCORD_WEBHOOK_URL=<Webhook URL>' | sudo tee /etc/opsbot/dynmap-update.env >/dev/null
+sudo chmod 0600 /etc/opsbot/dynmap-update.env
+
+sudo systemctl daemon-reload
+sudo systemctl start dynmap-deploy-update                # 初回は手動で実行して結果を確認
+journalctl -u dynmap-deploy-update -n 30 --no-pager
+sudo systemctl enable --now dynmap-deploy-update.timer
+```
+
+更新スクリプトは、取得したファイルが `bash -n` を通らない場合や `/etc/opsbot/dynmap_deploy.conf` が無い場合は差し替えない（現行版で動き続ける）。直前の版は `/opt/opsbot/dynmap_deploy.sh.prev` に残る。
 
 ### CT層の定期メンテナンス時間帯の自動停止
 
