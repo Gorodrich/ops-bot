@@ -139,9 +139,11 @@ def check_file(filename: str, raw_bytes: bytes) -> FileCheckResult:
             errors.append(f"条件①不合格（PNG形式として読み込めませんでした。検出形式: {fmt}）")
         w, h = img.size
         if w * h > UNTRUSTED_MAX_PIXELS:
-            # 寸法が1ゾーン分を超える画像は、ピクセルを展開せずに不合格とする（解凍爆弾対策）。
+            # 画素数が1ゾーン分（5000x5000）を超える画像は条件②（5000x5000の完全一致）を満たし得ず、
+            # 不合格が既に確定している。そのため条件③のためだけにピクセルを展開することはせず、
+            # ここで返す（解凍爆弾対策）。5000x5000ちょうどの正規の画像はこの分岐に入らない。
             errors.append(f"条件②不合格（サイズが5000x5000ではありません。実際: {w}x{h}）")
-            errors.append("条件③不合格（判定不可: 画像の画素数が上限を超えるため読み込んでいません）")
+            errors.append("条件③不合格（判定不可: 条件②の不合格が確定しており、画素数が大きすぎるため画像を展開していません）")
             return FileCheckResult(filename, False, errors, None)
         img.load()
     except Exception as e:  # noqa: BLE001 外部入力（破損ファイル等）に起因する全例外を握りつぶす
