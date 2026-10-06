@@ -80,6 +80,19 @@ describe("共同確認タスクの辞退と完了", () => {
     expect(task(env, taskId).co_signer).toBe("C");
   });
 
+  it("共同確認が不要なタスクは、辞退した人でも完了操作できる", async () => {
+    const plainId = Number(
+      env.DB.raw
+        .prepare("INSERT INTO tasks (type, title, required_tags, is_controversial, assignee, status) VALUES ('T-C', '通常の作業', '[]', 0, 'A', 'assigned')")
+        .run().lastInsertRowid,
+    );
+    await decline(env, "A", plainId);
+    expect(task(env, plainId).status).toBe("unassigned");
+
+    expect(await done(env, "A", plainId)).toContain("完了にしました");
+    expect(task(env, plainId).status).toBe("done");
+  });
+
   it("通常の共同確認フローは従来どおり担当者・共同確認者の双方で完了する", async () => {
     await done(env, "A", taskId);
     expect(await done(env, "C", taskId)).toContain("完了にしました");
