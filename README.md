@@ -584,7 +584,7 @@ main で開発 → PR（main → deploy）→ CI（ct-test / workers-test）が�
    - Deployment branches and tags：**Selected branches and tags** → `deploy` を追加
    - Environment secrets：`CLOUDFLARE_API_TOKEN`／`CLOUDFLARE_ACCOUNT_ID`／`DISCORD_DEPLOY_WEBHOOK_URL`
 5. Cloudflare の API トークンを作る（ダッシュボード → My Profile → API Tokens → Create Token → テンプレート「Edit Cloudflare Workers」）。Permissions に **Account → D1 → Edit** を追加し、Account Resources を自分のアカウントだけに絞る。Account ID は Workers & Pages の概要画面右側に表示される。
-6. 公開リポジトリのため、外部からのPRで勝手に Actions が動かないようにする（Settings → Actions → General → Fork pull request workflows from outside collaborators → **Require approval for all outside collaborators**）。
+6. 公開リポジトリのため、外部からのPRで勝手に Actions が動かないようにする（Settings → Actions → General → Approval for running fork pull request workflows from contributors → **Require approval for all external contributors**）。
 
 #### 初回導入：CT102
 
