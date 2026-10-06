@@ -126,6 +126,10 @@ export async function handleKyoka(env: Env, interaction: Interaction, options: C
   const subject = optionValue(options, "subject");
   const description = optionValue(options, "description") ?? null;
   if (!approvalKey || !subject) return immediate("kind・subject オプションが必要です。");
+  // /kyoka は運営内の記名許可のため、要請の作成自体を運営者（連携済みサブ垢を含む）に限る。
+  // createPermissionRequest は誰でも実行できる /umetate と共用のため、ゲートはここで掛ける（監査指摘・2026-10-07）。
+  const actor = await resolveUneiActor(env, interaction.member);
+  if (!actor.ok) return immediate(actor.message);
   return createPermissionRequest(env, interaction, { approvalKey, subject, description, imageUrl: null });
 }
 
