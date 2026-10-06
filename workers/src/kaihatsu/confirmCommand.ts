@@ -44,6 +44,16 @@ export async function handleKaihatsuConfirmComponent(env: Env, interaction: Inte
   if (application.requester !== actorId) {
     return immediate("この本人確認はご自身宛てのものではありません。");
   }
+  // 受付中（collecting）の同時処理グループの届出は、締切前でも本人が取り下げられる
+  // （他者に追加された届出が本人の新たな届出を塞ぎ続けないようにするため・監査指摘・2026-10-07）。
+  if (isWithdraw && application.status === "collecting" && application.group_key) {
+    return {
+      ack: { type: InteractionResponseType.UPDATE_MESSAGE, data: { content: "取り下げました。", components: [] } },
+      followUp: async () => {
+        await withdrawCollectingMember(env, application);
+      },
+    };
+  }
   if (application.status !== "provisional") {
     return immediate("この届出は既に処理済みです。");
   }
@@ -74,6 +84,14 @@ export async function handleKaihatsuConfirmComponent(env: Env, interaction: Inte
       }
     },
   };
+}
+
+async function withdrawCollectingMember(env: Env, application: ApplicationRow): Promise<void> {
+  const res = await env.DB.prepare("UPDATE applications SET status = 'withdrawn' WHERE id = ? AND status = 'collecting'")
+    .bind(application.id)
+    .run();
+  if ((res.meta.changes ?? 0) !== 1) return; // 締切・失効等で既に状態が変わっていた
+  await tryResolveGroup(env, application.group_key as string);
 }
 
 export async function handleWithdrawOrExpire(env: Env, application: ApplicationRow, reason: "withdrawn" | "expired"): Promise<void> {

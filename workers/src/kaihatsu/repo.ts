@@ -344,6 +344,12 @@ export async function listFinalizedGroupsPastDeadline(env: Env, nowIsoValue: str
   return res.results ?? [];
 }
 
+/** 受付中（collecting）の同時処理グループ一覧（受付中のまま放置されたグループの失効処理用）。 */
+export async function listCollectingGroups(env: Env): Promise<ApplicationGroupRow[]> {
+  const res = await env.DB.prepare("SELECT * FROM application_groups WHERE status = 'collecting' ORDER BY created_at ASC").all<ApplicationGroupRow>();
+  return res.results ?? [];
+}
+
 export async function listProvisionalApplicationsPastDeadline(env: Env, nowIsoValue: string): Promise<ApplicationRow[]> {
   const res = await env.DB.prepare(
     "SELECT * FROM applications WHERE status = 'provisional' AND group_key IS NULL AND provisional_until IS NOT NULL AND provisional_until <= ?",

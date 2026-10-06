@@ -113,6 +113,39 @@ export function buildConfirmWithdrawButtonRow(applicationId: number): unknown[] 
   ];
 }
 
+/** 受付中（collecting）の同時処理グループに他者から追加された対象者向けの「取り下げる」ボタンのみの行。 */
+export function buildWithdrawOnlyButtonRow(applicationId: number): unknown[] {
+  return [
+    {
+      type: 1,
+      components: [{ type: 2, style: 4, label: "取り下げる", custom_id: `${WITHDRAW_BUTTON_CUSTOM_ID_PREFIX}${applicationId}` }],
+    },
+  ];
+}
+
+/**
+ * 他者が自分を同時処理グループ（受付中）に追加したことの通知DM。
+ * 受付中の届出は本人の新たな届出を妨げるため、本人が知らないまま放置されないよう追加時点で知らせ、
+ * 取り下げ手段を与える（監査指摘・2026-10-07）。
+ */
+export function buildGroupMemberAddedNoticeEmbed(args: {
+  mcName: string;
+  representativeMention: string;
+  op: "set" | "delete";
+  expiresDiscordTimestamp: string;
+}): Record<string, unknown> {
+  const what = args.op === "delete" ? "あなたの個人開発領を削除する届出" : "あなたの個人開発領の設定届出";
+  return {
+    title: "【個人開発領：同時処理グループへの追加】",
+    description:
+      `${args.representativeMention} さんが、${what}（${args.mcName}）を同時処理グループに追加しました。\n\n` +
+      `代表者が受付を締め切ると、あらためて本人確認のDMが届きます。それまでの間、あなた自身の新たな /kaihatsu の届出は受け付けられません。\n\n` +
+      `心当たりがない場合は「取り下げる」を押してください（グループ全体が却下されます）。期限までに締め切られなかった場合も自動的に失効します。`,
+    color: COLOR_NEUTRAL,
+    fields: [{ name: "失効期限", value: args.expiresDiscordTimestamp, inline: true }],
+  };
+}
+
 /** 本人確認DM（§5.7.3）：代表者一括申請・同時処理グループの対象者に、この内容で申請してよいか確認する。 */
 export function buildProvisionalConfirmEmbed(args: {
   mcName: string;
