@@ -1,0 +1,19 @@
+# /etc/systemd/system/dynmap-deploy-update.service（CT104）
+# GitHub の deploy ブランチから dynmap_deploy.sh を取得して差し替える。
+# 手動で今すぐ反映したいときは sudo systemctl start dynmap-deploy-update
+
+[Unit]
+Description=Update /opt/opsbot/dynmap_deploy.sh from GitHub deploy branch
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/opsbot/dynmap-update.env
+ExecStart=/usr/local/sbin/dynmap-deploy-update
+TimeoutStartSec=2min
+ProtectSystem=strict
+ReadWritePaths=/opt/opsbot
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true

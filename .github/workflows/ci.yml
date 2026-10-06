@@ -1,0 +1,47 @@
+# PR・push ごとに CT層（Python）と Edge層（Workers）のテストを流す。
+# deploy ブランチのルールセットで、ここのジョブ名（ct-test / workers-test）を
+# 「必須の status check」に指定する。paths フィルタを付けると、対象外の変更で
+# 必須チェックが「待機中」のまま止まってマージできなくなるため、常に全ジョブを流す。
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main, deploy]
+
+permissions:
+  contents: read
+
+jobs:
+  ct-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ct
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11" # pyproject.toml の requires-python 下限に合わせる
+          cache: pip
+          cache-dependency-path: ct/pyproject.toml
+      - run: pip install -e ".[dev]"
+      - run: python -m pytest -q
+
+  workers-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: workers
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: workers/package-lock.json
+      # wrangler と @cloudflare/workers-types の peer 依存の食い違いで素の npm ci は
+      # ERESOLVE になるため、既存の package-lock.json どおりに入れる。
+      - run: npm ci --legacy-peer-deps
+      - run: npm run typecheck
+      - run: npm test

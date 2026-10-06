@@ -1,0 +1,22 @@
+# /etc/systemd/system/opsbot-ct-deploy.service
+# GitHub の deploy ブランチを /opt/opsbot/ct へ反映する（opsbot-ct-deploy.sh）。
+# opsbot-ct-deploy.timer から5分おきに起動される。手動で今すぐ反映したいときは
+#   sudo systemctl start opsbot-ct-deploy
+# 結果は Discord 通知と journalctl -u opsbot-ct-deploy で確認できる。
+
+[Unit]
+Description=Deploy OpsBot CT layer from GitHub deploy branch
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=opsbot-deploy
+Group=opsbot-deploy
+EnvironmentFile=/etc/opsbot/deploy.env
+ExecStart=/usr/local/bin/opsbot-ct-deploy
+TimeoutStartSec=15min
+# 再起動に sudo（setuid）を使うため NoNewPrivileges は付けない。
+# sudo が /run 等へ書き込むため ProtectSystem=strict も付けない。
+ProtectHome=true
+PrivateTmp=true

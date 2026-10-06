@@ -1,0 +1,8 @@
+# /etc/opsbot/dynmap_deploy.conf（CT104・dynmap_deploy.sh が読む配信先の設定）
+# 強制コマンドのユーザー（opsbot-dynmap）が書き換えられないよう root 所有・0644 で置く：
+#   sudo install -o root -g root -m 0644 dynmap_deploy.conf.example /etc/opsbot/dynmap_deploy.conf
+# <crafty-server-uuid> は Crafty 管理画面のサーバー URL、または GET /api/v2/servers で確認できる UUID。
+DYNMAP_WEB_DIR="/home/minecraft/crafty/servers/<crafty-server-uuid>/plugins/dynmap/web"
+# 以下は通常変更不要（CT102 側の OPSBOT_DYNMAP_IMAGES_SUBDIR / OPSBOT_DYNMAP_OVERLAY_JS_PATH と揃える）
+IMAGES_SUBDIR="images/indiv"
+REGIONS_JS_PATH="js/custom_overlay.js"

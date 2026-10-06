@@ -1,0 +1,67 @@
+# deploy ブランチへのマージで Workers を本番デプロイする。
+# 秘密情報は GitHub の Environment「production」にだけ置き、その Environment は
+# deploy ブランチからしか使えないように設定する（README「自動デプロイ」参照）。
+# 第三者製の Action は使わず、package-lock.json で固定済みの wrangler を直接呼ぶ。
+name: deploy-workers
+
+on:
+  push:
+    branches: [deploy]
+    paths:
+      - "workers/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-workers
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    defaults:
+      run:
+        working-directory: workers
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2 # 直前のコミットとの差分（コマンド定義の変更有無）を見るため
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: workers/package-lock.json
+      - run: npm ci --legacy-peer-deps
+      - run: npm run typecheck
+      - run: npm test
+      # 未適用のマイグレーションだけが適用される。破壊的なマイグレーションも自動で
+      # 本番に流れるため、migrations/ を変更するPRは特に慎重にレビューすること。
+      - run: npx wrangler d1 migrations apply opsbot --remote
+      - run: npx wrangler deploy
+
+      - name: Discord通知
+        if: always()
+        working-directory: .
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK_URL }}
+          STATUS: ${{ job.status }}
+          SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          [ -n "$WEBHOOK" ] || exit 0
+          if [ "$STATUS" = "success" ]; then head="✅ Workers デプロイ成功"; else head="❌ Workers デプロイ失敗（$STATUS）"; fi
+          msg="$head \`${SHA:0:7}\`"
+          if git diff --quiet HEAD~1 HEAD -- workers/scripts/register-commands.mjs 2>/dev/null; then :; else
+            msg="$msg
+          ⚠ スラッシュコマンド定義が変わっています。手動で npm run commands:register を実行してください。"
+          fi
+          msg="$msg
+          $RUN_URL"
+          jq -n --arg c "$msg" '{content: $c}' \
+            | curl -fsS -m 10 -H 'Content-Type: application/json' -d @- "$WEBHOOK" || true

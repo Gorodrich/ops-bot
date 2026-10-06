@@ -8,7 +8,12 @@
 #      実行するため、シェルをnologinにすると強制コマンド自体が動かなくなる（sshdがnologinを
 #      execしてしまい"This account is currently not available."で終了する）。対話ログインの
 #      禁止はno-pty（＋パスワード認証を無効化）で行う。
-#   2. 本スクリプトを 0700 opsbot-dynmap:opsbot-dynmap で /opt/opsbot/dynmap_deploy.sh に配置する。
+#   2. 配信先の設定を /etc/opsbot/dynmap_deploy.conf に root:root 0644 で置く
+#      （dynmap_deploy.conf.example 参照）。本スクリプトは root:root 0755 で
+#      /opt/opsbot/dynmap_deploy.sh に配置する（/opt/opsbot も root 所有・他者書き込み不可）。
+#      強制コマンドで動く opsbot-dynmap 自身が、本スクリプトや設定を書き換えられないようにするため。
+#      以後の更新は dynmap-deploy-update.timer が GitHub の deploy ブランチから自動で行う
+#      （README「自動デプロイ」参照）。
 #   3. CT102側で生成した公開鍵を ~opsbot-dynmap/.ssh/authorized_keys に以下の形式で1行登録する：
 #        command="/opt/opsbot/dynmap_deploy.sh",no-pty,no-port-forwarding,no-X11-forwarding,\
 #        no-agent-forwarding,no-user-rc ssh-ed25519 AAAA... opsbot-ct102
@@ -29,6 +34,8 @@
 #                              書き込む（ホバー当たり判定専用の縮小画像）。
 #                              <name> はいずれも英数字とアンダースコアのみ（Minecraftユーザー名の制約）。
 #
+# 終了コード：0=成功 1=引数不正 2=未知のサブコマンド 3=regions.js無し（read-regions） 4=設定不備
+#
 # 2026-09-21変更：decisions.md #63により旧`write-image <name>`（images/indiv/<name>.pngへの
 # 単一画像書き込み）を廃止し、`write-tile`/`write-preview`に置き換えた。旧サブコマンドで既に
 # 配置済みの images/indiv/<name>.png は削除しない（open-items #38と同様、誤削除防止のため
@@ -39,11 +46,22 @@
 
 set -euo pipefail
 
-# ★配置先のサーバー構成に合わせて必ず書き換える。<crafty-server-uuid> は Crafty の
-# 管理画面のサーバー URL、または GET /api/v2/servers で確認できる UUID。
-DYNMAP_WEB_DIR="/home/minecraft/crafty/servers/<crafty-server-uuid>/plugins/dynmap/web"
+# 配信先の設定は環境ごとに異なるため本スクリプトには書かず、設定ファイルから読む
+# （2026-10-06変更：リポジトリのファイルをそのまま自動配置できるようにするため）。
+CONF="/etc/opsbot/dynmap_deploy.conf"
+DYNMAP_WEB_DIR=""
 IMAGES_SUBDIR="images/indiv"
 REGIONS_JS_PATH="js/custom_overlay.js"
+if [ ! -r "$CONF" ]; then
+  echo "config not found: $CONF" >&2
+  exit 4
+fi
+# shellcheck source=/dev/null
+. "$CONF"
+if [ -z "$DYNMAP_WEB_DIR" ] || [ ! -d "$DYNMAP_WEB_DIR" ]; then
+  echo "invalid DYNMAP_WEB_DIR: $DYNMAP_WEB_DIR" >&2
+  exit 4
+fi
 
 images_dir="${DYNMAP_WEB_DIR}/${IMAGES_SUBDIR}"
 regions_file="${DYNMAP_WEB_DIR}/${REGIONS_JS_PATH}"
