@@ -109,3 +109,46 @@ def test_dispatch_claude_code_llm_error_is_failed(monkeypatch):
     assert status == "failed"
     assert result is None
     assert "見つかりません" in error
+
+
+# ── process_jobs：ジョブ単位の例外ガード（監査指摘・2026-10-07） ─────────────
+
+
+def _record_reports(monkeypatch):
+    reports: list[tuple[int, str, str | None]] = []
+
+    def fake_report(_client, _cfg, job_id, *, status, result=None, error=None):
+        reports.append((job_id, status, error))
+
+    monkeypatch.setattr(poller_module, "report_complete", fake_report)
+    return reports
+
+
+def test_process_jobs_reports_failed_on_unexpected_error_and_continues(monkeypatch):
+    reports = _record_reports(monkeypatch)
+
+    def fake_dispatch(job, _crafty, _cfg):
+        if job["id"] == 1:
+            raise ConnectionError("[Errno 111] Connection refused")  # httpx の通信エラー相当（型付き例外に包まれない）
+        return "done", {"ok": True}, None
+
+    monkeypatch.setattr(poller_module, "dispatch", fake_dispatch)
+    jobs = [{"id": 1, "kind": "crafty_op"}, {"id": 2, "kind": "crafty_op"}, {"id": 3, "kind": "mojang_lookup"}]
+    poller_module.process_jobs(None, _CFG, None, jobs)
+
+    assert [(r[0], r[1]) for r in reports] == [(1, "failed"), (2, "done"), (3, "done")]
+    assert "Connection refused" in (reports[0][2] or "")
+
+
+def test_process_jobs_stops_starting_new_jobs_after_sigterm(monkeypatch):
+    reports = _record_reports(monkeypatch)
+
+    def fake_dispatch(job, _crafty, _cfg):
+        poller_module._running = False  # 1件目の処理中に停止要求を受けた想定
+        return "done", None, None
+
+    monkeypatch.setattr(poller_module, "dispatch", fake_dispatch)
+    monkeypatch.setattr(poller_module, "_running", True)
+    poller_module.process_jobs(None, _CFG, None, [{"id": 1}, {"id": 2}])
+
+    assert [r[0] for r in reports] == [1]

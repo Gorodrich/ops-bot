@@ -90,24 +90,38 @@ export async function completeJob(
     .first<JobRow>();
   if (!job) return null;
 
+  // processing（claim済み）の行に対する報告だけを受け付ける。リース期限切れで回収済み・
+  // 既に完了済みのジョブへの遅延報告や重複報告は、副作用を二重に起こさないよう無視する。
   if (outcome.status === "done") {
-    await env.DB.prepare(
-      `UPDATE job_queue SET status = 'done', result = ?, updated_at = ? WHERE id = ?`,
+    const res = await env.DB.prepare(
+      `UPDATE job_queue SET status = 'done', result = ?, updated_at = ? WHERE id = ? AND status = 'processing'`,
     )
       .bind(JSON.stringify(outcome.result ?? null), nowIso(), id)
       .run();
+    if ((res.meta.changes ?? 0) !== 1) return null;
     return { ...job, status: "done" };
   }
 
   // 失敗：再試行スケジュールへ戻す（呼び出し側が上限超過を判断してエスカレーションする）
   const attempts = job.attempts + 1;
-  await env.DB.prepare(
+  const res = await env.DB.prepare(
     `UPDATE job_queue SET status = 'pending', attempts = ?, result = ?, next_retry_at = ?, updated_at = ?
-     WHERE id = ?`,
+     WHERE id = ? AND status = 'processing'`,
   )
     .bind(attempts, JSON.stringify({ error: outcome.error ?? "unknown" }), null, nowIso(), id)
     .run();
+  if ((res.meta.changes ?? 0) !== 1) return null;
   return { ...job, status: "pending", attempts };
+}
+
+/** processing のまま locked_at が指定時刻以前のジョブ（リース期限切れ）の id を返す。 */
+export async function listExpiredLeases(env: Env, lockedBeforeIso: string): Promise<Array<{ id: number; kind: JobKind }>> {
+  const res = await env.DB.prepare(
+    `SELECT id, kind FROM job_queue WHERE status = 'processing' AND locked_at IS NOT NULL AND locked_at <= ? ORDER BY id ASC LIMIT 50`,
+  )
+    .bind(lockedBeforeIso)
+    .all<{ id: number; kind: JobKind }>();
+  return res.results ?? [];
 }
 
 export async function scheduleRetry(env: Env, id: number, nextRetryAtIso: string): Promise<void> {

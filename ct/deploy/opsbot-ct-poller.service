@@ -16,6 +16,9 @@ WorkingDirectory=/opt/opsbot/ct
 ExecStart=/opt/opsbot/ct/.venv/bin/python -m opsbot_ct.poller
 Restart=always
 RestartSec=10
+# 停止要求（SIGTERM）後、処理中のジョブ（claude_code は既定で最大120秒）を終えて完了報告できるよう、
+# systemd 既定の90秒より長く待つ。超えた場合に取り残されたジョブは Workers 側のリース回収で再試行される。
+TimeoutStopSec=180
 
 # リソース上限（§9・§11-13：OOM Killer での不定停止を避ける）
 MemoryMax=2G

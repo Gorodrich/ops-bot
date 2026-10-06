@@ -218,6 +218,25 @@ def dispatch(job: dict[str, Any], crafty: CraftyClient | None, cfg: Config) -> t
     return "failed", None, f"未実装のジョブ種別: {kind}"
 
 
+def process_jobs(client: Any, cfg: Config, crafty: CraftyClient | None, jobs: list[dict[str, Any]]) -> None:
+    """1回のポーリングで取得したジョブを順に処理し、1件ずつ完了報告する。
+
+    dispatch が想定外の例外（httpx の通信エラー等）を投げても、そのジョブを failed として報告し、
+    残りのジョブの処理・報告を続ける（報告されないジョブが Workers 側で processing のまま残らないようにする）。
+    停止シグナル受信後は新たなジョブに着手しない（未着手分は Workers 側のリース回収で再試行される）。
+    """
+    for job in jobs:
+        if not _running:
+            log.info("停止要求のため残りのジョブに着手しません: job_id=%s 以降", job.get("id"))
+            break
+        try:
+            status, result, error = dispatch(job, crafty, cfg)
+        except Exception as e:  # noqa: BLE001
+            log.exception("ジョブ処理中の想定外エラー: job_id=%s", job.get("id"))
+            status, result, error = "failed", None, f"想定外のエラー: {e}"
+        report_complete(client, cfg, job["id"], status=status, result=result, error=error)
+
+
 def run() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     signal.signal(signal.SIGTERM, _handle_sigterm)
@@ -247,9 +266,7 @@ def run() -> None:
             try:
                 jobs = poll_once(client, cfg)
                 if jobs:
-                    for job in jobs:
-                        status, result, error = dispatch(job, crafty, cfg)
-                        report_complete(client, cfg, job["id"], status=status, result=result, error=error)
+                    process_jobs(client, cfg, crafty, jobs)
                     interval = cfg.active_interval_sec
                 else:
                     interval = min(interval * 1.5, cfg.idle_interval_sec)
