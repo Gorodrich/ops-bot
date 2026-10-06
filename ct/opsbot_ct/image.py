@@ -30,6 +30,8 @@ import io
 import logging
 import os
 import re
+from collections.abc import Iterator
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -40,6 +42,30 @@ log = logging.getLogger("opsbot_ct.image")
 
 MAX_AREA = 250_000
 ZONE_SIZE = 5000
+
+# Pillow の解凍爆弾対策の上限（画素数）。参加者がアップロードする画像（外部入力）を前提に、
+# プロセス既定は1ゾーン分（5000x5000）とする。CT自身が生成した信頼できるマスク（合成・クロップ後に
+# 最大20000x20000pxに達しうる）を開く箇所だけ、trusted_mask_pixel_limit() で上限を引き上げる
+# （監査指摘・2026-10-07：以前は dynmap_tiles.py がプロセス全体で上限を無効化していたため、
+#  /kaihatsu set の添付に巨大な寸法を宣言した小さなPNGを渡すと、寸法検査の前に全画素が展開されていた）。
+UNTRUSTED_MAX_PIXELS = ZONE_SIZE * ZONE_SIZE
+TRUSTED_MASK_MAX_PIXELS = 20000 * 20000
+Image.MAX_IMAGE_PIXELS = UNTRUSTED_MAX_PIXELS
+
+
+@contextmanager
+def _pixel_limit(limit: int | None) -> Iterator[None]:
+    prev = Image.MAX_IMAGE_PIXELS
+    Image.MAX_IMAGE_PIXELS = limit
+    try:
+        yield
+    finally:
+        Image.MAX_IMAGE_PIXELS = prev
+
+
+def trusted_mask_pixel_limit() -> AbstractContextManager[None]:
+    """CTが生成・保存したマスク画像を開くときだけ、解凍爆弾対策の上限を引き上げる。"""
+    return _pixel_limit(TRUSTED_MASK_MAX_PIXELS)
 
 NEW_REGION_COLOR = (255, 0, 255)   # 新規申請範囲（既存ツールと同じ配色）
 OVERLAP_COLOR = (255, 0, 0)        # 重複範囲（条件⑤⑥不合格の可視化）
@@ -104,11 +130,20 @@ def check_file(filename: str, raw_bytes: bytes) -> FileCheckResult:
     """条件①②③（別紙6.1章）。判定不可な項目も含め漏れなく記録する（別紙6.2章）。"""
     errors: list[str] = []
     try:
-        img = Image.open(io.BytesIO(raw_bytes))
-        img.load()
+        # まずヘッダ（形式・寸法）だけを読む。Image.open はピクセルを展開しないため、
+        # ここでは寸法による拒否を自前で行えるよう上限判定を外しておく。
+        with _pixel_limit(None):
+            img = Image.open(io.BytesIO(raw_bytes))
         fmt = img.format
         if fmt != "PNG":
             errors.append(f"条件①不合格（PNG形式として読み込めませんでした。検出形式: {fmt}）")
+        w, h = img.size
+        if w * h > UNTRUSTED_MAX_PIXELS:
+            # 寸法が1ゾーン分を超える画像は、ピクセルを展開せずに不合格とする（解凍爆弾対策）。
+            errors.append(f"条件②不合格（サイズが5000x5000ではありません。実際: {w}x{h}）")
+            errors.append("条件③不合格（判定不可: 画像の画素数が上限を超えるため読み込んでいません）")
+            return FileCheckResult(filename, False, errors, None)
+        img.load()
     except Exception as e:  # noqa: BLE001 外部入力（破損ファイル等）に起因する全例外を握りつぶす
         errors.append(f"条件①不合格（画像として読み込めません: {e}）")
         errors.append("条件②不合格（判定不可: 画像を読み込めなかったため）")
@@ -242,7 +277,7 @@ def load_mask_alpha(path: str) -> "np.ndarray | None":
     （1件のマスク破損でジョブ全体を失敗させない）。
     """
     try:
-        with Image.open(path) as img:
+        with trusted_mask_pixel_limit(), Image.open(path) as img:
             return np.array(img.convert("RGBA").getchannel("A"))
     except OSError as e:
         log.warning("マスク読み込み失敗（スキップ）: path=%s error=%s", path, e)

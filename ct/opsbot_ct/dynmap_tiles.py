@@ -25,10 +25,12 @@ from dataclasses import dataclass
 import numpy as np
 from PIL import Image
 
+from .image import trusted_mask_pixel_limit
+
 # image.pyのドキュメント（合成キャンバスは最大20000x20000pxに達しうる）どおり、ここで扱う
-# マスクPNGはCT側が既に生成した信頼できるファイルであり、Pillowの既定の
-# 「解凍爆弾」対策（未知の外部入力を想定した上限）は本用途では過検知になるため無効化する。
-Image.MAX_IMAGE_PIXELS = None
+# マスクPNGはCT側が既に生成した信頼できるファイルであるため、開くときだけ
+# trusted_mask_pixel_limit() で解凍爆弾対策の上限を引き上げる。プロセス全体の上限は
+# 変更しない（参加者の添付画像を扱う image.check_file と同じプロセスで動くため・監査指摘・2026-10-07）。
 
 DEFAULT_TILE_SIZE = 512
 DEFAULT_PREVIEW_MAX_SIZE = 180  # custom_overlay.js の ALPHA_CANVAS_MAX_SIZE と合わせる
@@ -61,7 +63,7 @@ def split_into_tiles(
     if tile_size <= 0:
         raise ValueError(f"tile_sizeは正の整数である必要があります: {tile_size}")
 
-    with Image.open(io.BytesIO(mask_png_bytes)) as img:
+    with trusted_mask_pixel_limit(), Image.open(io.BytesIO(mask_png_bytes)) as img:
         rgba = img.convert("RGBA")
         w, h = rgba.size
         alpha = np.array(rgba.getchannel("A"))
@@ -106,7 +108,7 @@ def build_preview_image(mask_png_bytes: bytes, *, max_size: int = DEFAULT_PREVIE
     if max_size <= 0:
         raise ValueError(f"max_sizeは正の整数である必要があります: {max_size}")
 
-    with Image.open(io.BytesIO(mask_png_bytes)) as img:
+    with trusted_mask_pixel_limit(), Image.open(io.BytesIO(mask_png_bytes)) as img:
         rgba = img.convert("RGBA")
         w, h = rgba.size
         scale = min(1.0, max_size / max(w, h))
