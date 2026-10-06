@@ -699,6 +699,6 @@ Copyright (C) 2026 3DS半分こするくらい仲良しクラフト中央委員�
 
 ## 免責事項
 
-本プロジェクトは Minecraft 公式の製品・サービスではありません。Mojang または Microsoft から承認を受けておらず、それらとの関連性もありません。
+本プロジェクトは Minecraft 公式の製品・サービスではありません。Mojang または Microsoft から承認を受けておらず、それらとの関連性もありません。　
 
 「Minecraft」は Mojang Synergies AB の商標です。
