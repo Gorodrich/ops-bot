@@ -69,7 +69,7 @@ class Config:
     anthropic_cli_path: str = "claude"
     # CLIの既定モデルに委ねず明示指定する（値はCLIが解釈するエイリアス／モデルIDそのまま）。
     # 空文字なら --model を付与せずCLI既定に委ねる（後方互換）。
-    anthropic_model: str = "sonnet"
+    anthropic_model: str = "claude-sonnet-5-5"
     claude_timeout_sec: int = 120
     # 根拠条文のgrep先（§7.3）。未設定なら該当抜粋なしで動作する（あると便利な機能・必須ではない）。
     rules_dir: str = ""
@@ -115,7 +115,7 @@ class Config:
             ),
             dynmap_sync_enabled=opt("OPSBOT_DYNMAP_SYNC_ENABLED", "false").lower() == "true",
             anthropic_cli_path=opt("OPSBOT_ANTHROPIC_CLI_PATH", "claude"),
-            anthropic_model=opt("OPSBOT_ANTHROPIC_MODEL", "sonnet"),
+            anthropic_model=opt("OPSBOT_ANTHROPIC_MODEL", "claude-sonnet-5-5"),
             claude_timeout_sec=int(opt("OPSBOT_CLAUDE_TIMEOUT_SEC", "120")),
             rules_dir=opt("OPSBOT_RULES_DIR", ""),
         )

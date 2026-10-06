@@ -1,0 +1,18 @@
+# /etc/systemd/system/opsbot-claude-update.service
+# Claude Code CLI（root所有のグローバルnpm）を更新する（opsbot-claude-update.timerから起動）。
+#
+# opsbotユーザーに書込権限を与えず、ポーラーのハードニング（ProtectHome=read-only等）も
+# 崩さないため、更新はroot実行のこのoneshotで行う。`claude -p` は呼び出しごとに新規
+# プロセスなので、更新後のポーラー再起動は不要。
+# latestチャンネルを追従する（2026-10-06決定。stableは手動確認済みのlatestより古く、
+# 初回でダウングレードになるため）。更新後にLLMジョブが失敗し続ける場合は
+# `claude --version` の変化を疑うこと。
+
+[Unit]
+Description=Update Claude Code CLI (latest channel)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/npm install -g @anthropic-ai/claude-code@latest
