@@ -164,10 +164,12 @@ export async function markProvisional(
 export async function markHeldAndNotify(env: Env, application: ApplicationRow, result: CtSetResult): Promise<void> {
   const blockingRefType = result.held_blocking_ref_type ?? null;
   const blockingRefId = result.held_blocking_ref_id ?? null;
+  // 元の届出内容（添付・プレイヤー名等）は保留解放後の再審査（requeueSingleApplication）で必要になるため残す。
+  const original = safeJsonParse<Record<string, unknown>>(application.payload) ?? {};
   await markApplicationHeld(env, application.id, {
     blockingApplicationId: blockingRefType === "application" ? Number(blockingRefId) : null,
     blockingGroupKey: blockingRefType === "group" ? String(blockingRefId) : null,
-    payload: { ctResult: result },
+    payload: { ...original, ctResult: result },
   });
 
   const deadlines = await getDeadlines(env);
@@ -394,7 +396,9 @@ async function requeueSingleApplication(env: Env, application: ApplicationRow): 
   const original = safeJsonParse<{ attachments: Array<{ filename: string; url: string }>; mc_name: string; mc_uuid: string; previous_own_claim_id?: number | null }>(
     application.payload,
   );
-  if (!original) {
+  if (!original || !Array.isArray(original.attachments) || original.attachments.length === 0) {
+    // 添付を復元できないまま再審査ジョブを積むと必ず失敗するため、処理中のまま残さず失敗扱いにする
+    await updateApplicationStatus(env, application.id, "failed").catch(() => {});
     console.error("requeueSingleApplication: 元のpayloadを復元できません", application.id);
     return;
   }
@@ -447,3 +451,33 @@ async function requeueSingleApplication(env: Env, application: ApplicationRow): 
 }
 
 export { KAIHATSU_MESSAGES };
+
+/**
+ * 保留の原因が既に保留を続ける理由を失っているのに held のまま残っている届出を解放する（締切Cronのバックストップ）。
+ * 保留の原因となる届出が仮承認・本人確認済み・再審査中・保留中のいずれでもなくなっていれば解放し、
+ * 原因が正式承認済みなら重複確定として却下、それ以外（取り下げ・期限切れ・却下等）なら再審査に回す。
+ * グループ単位の保留も、グループが確定（成立・却下）済みなら同様に扱う（監査指摘・2026-10-07）。
+ */
+export async function releaseOrphanedHolds(env: Env): Promise<void> {
+  const byApplication = await env.DB.prepare(
+    `SELECT DISTINCT b.id AS id, b.status AS status, b.owner_mc_name AS owner_mc_name
+     FROM applications h JOIN applications b ON b.id = h.held_blocking_application_id
+     WHERE h.status = 'held' AND b.status NOT IN ('provisional','confirmed','processing','held')`,
+  ).all<{ id: number; status: string; owner_mc_name: string | null }>();
+  for (const b of byApplication.results ?? []) {
+    if (b.status === "approved") {
+      await releaseHoldsForResolvedApplication(env, b.id, "approved", b.owner_mc_name ?? undefined);
+    } else {
+      await releaseHoldsForResolvedApplication(env, b.id, "released");
+    }
+  }
+
+  const byGroup = await env.DB.prepare(
+    `SELECT DISTINCT g.group_key AS group_key, g.status AS status
+     FROM applications h JOIN application_groups g ON g.group_key = h.held_blocking_group_key
+     WHERE h.status = 'held' AND g.status IN ('approved','rejected')`,
+  ).all<{ group_key: string; status: string }>();
+  for (const g of byGroup.results ?? []) {
+    await releaseHoldsForResolvedGroup(env, g.group_key, g.status === "approved" ? "approved" : "released");
+  }
+}
