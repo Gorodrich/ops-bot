@@ -104,19 +104,23 @@ export async function runLlmMessageScan(env: Env): Promise<void> {
   ];
   if (targets.length === 0) return;
 
-  const eligible: DetectMessageInput[] = [];
+  // チャンネルごとに通過メッセージを集め、カーソルは最後にまとめて進める。
+  // 1ジョブあたりの上限（MAX_MESSAGES_PER_JOB）を超えた分は捨てずに次回スキャンへ繰り越すため、
+  // 各チャンネルのカーソルは「実際にジョブへ含めた範囲」までしか進めない（監査指摘・2026-10-07：
+  // 先に開設された1つのチケットへの大量投稿で、他チャンネルのメッセージが検出対象から永久に漏れていた）。
+  const scanned: Array<{ channelId: string; messages: DiscordMessage[]; eligible: Array<{ messageId: string; input: DetectMessageInput }> }> = [];
 
   for (const target of targets) {
     const cursor = await getCursor(env, target.channelId);
     const { messages, mayHaveMore } = await getChannelMessagesAfter(env.DISCORD_BOT_TOKEN, target.channelId, cursor);
     if (messages.length === 0) continue;
 
-    const newest = messages[messages.length - 1] as DiscordMessage;
-    await setCursor(env, target.channelId, newest.id);
-
     // 初回登録時は既存ログを一括検出しない（バックフィル抑止）。ただしticketチャンネルは
     // 新規発行直後の本題（開設時点の最初のメッセージ）を取りこぼさないよう例外とする（§4.1.1）。
-    if (cursor === null && target.kind === "ops") continue;
+    if (cursor === null && target.kind === "ops") {
+      await setCursor(env, target.channelId, (messages[messages.length - 1] as DiscordMessage).id);
+      continue;
+    }
     if (mayHaveMore) {
       console.warn(`llm message scan: channel ${target.channelId} は1回のポーリングで取得しきれていません（100件到達）`);
     }
@@ -134,23 +138,61 @@ export async function runLlmMessageScan(env: Env): Promise<void> {
       alreadyDetectedMessageIds: alreadyDetected,
     });
 
+    const eligible: Array<{ messageId: string; input: DetectMessageInput }> = [];
     for (const p of passed) {
       const original = messages.find((m) => m.id === p.id);
       if (!original) continue;
       eligible.push({
-        source_message_url: `https://discord.com/channels/${guildId}/${target.channelId}/${p.id}`,
-        channel_kind: target.kind,
-        author_discord_id: p.authorId,
-        mentioned_discord_ids: extractMentionedDiscordIds(p.content),
-        body: p.content,
+        messageId: p.id,
+        input: {
+          source_message_url: `https://discord.com/channels/${guildId}/${target.channelId}/${p.id}`,
+          channel_kind: target.kind,
+          author_discord_id: p.authorId,
+          mentioned_discord_ids: extractMentionedDiscordIds(p.content),
+          body: p.content,
+        },
       });
     }
+    scanned.push({ channelId: target.channelId, messages, eligible });
   }
 
-  if (eligible.length === 0) return; // フィルタ不通過：CTへのリクエスト自体を発生させない（§7.1：起動コスト0）
-  if (llmSetting.paused) return; // 縮退運転中（C-2）：機械層のみで完結させ、LLM呼び出しは行わない
+  const totalEligible = scanned.reduce((n, c) => n + c.eligible.length, 0);
+  // フィルタ不通過：CTへのリクエスト自体を発生させない（§7.1：起動コスト0）。
+  // 縮退運転中（C-2）：機械層のみで完結させ、LLM呼び出しは行わない（この間の発言は検出対象にしない）。
+  if (totalEligible === 0 || llmSetting.paused) {
+    for (const c of scanned) await setCursor(env, c.channelId, (c.messages[c.messages.length - 1] as DiscordMessage).id);
+    return;
+  }
 
-  const batch = eligible.slice(0, MAX_MESSAGES_PER_JOB);
+  // チャンネル間で上限枠をラウンドロビンに配分する（1チャンネルが枠を独占しないように）。
+  const takenCount = new Map<string, number>(scanned.map((c) => [c.channelId, 0]));
+  const batch: DetectMessageInput[] = [];
+  for (let round = 0; batch.length < MAX_MESSAGES_PER_JOB; round++) {
+    let progressed = false;
+    for (const c of scanned) {
+      if (batch.length >= MAX_MESSAGES_PER_JOB) break;
+      const item = c.eligible[round];
+      if (!item) continue;
+      batch.push(item.input);
+      takenCount.set(c.channelId, round + 1);
+      progressed = true;
+    }
+    if (!progressed) break;
+  }
+
+  for (const c of scanned) {
+    const taken = takenCount.get(c.channelId) ?? 0;
+    const firstSkipped = c.eligible[taken];
+    if (!firstSkipped) {
+      await setCursor(env, c.channelId, (c.messages[c.messages.length - 1] as DiscordMessage).id);
+      continue;
+    }
+    // 繰り越す最初のメッセージの直前までカーソルを進める（次回スキャンでそこから再取得される）。
+    const idx = c.messages.findIndex((m) => m.id === firstSkipped.messageId);
+    const before = idx > 0 ? c.messages[idx - 1] : undefined;
+    if (before) await setCursor(env, c.channelId, before.id);
+  }
+
   await enqueueJob(env, "claude_code", {
     subkind: "detect_tasks",
     max_tokens: llmSetting.max_tokens,
