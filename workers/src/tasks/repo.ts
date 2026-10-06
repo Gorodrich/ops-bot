@@ -254,9 +254,11 @@ export function taskRequiresCosign(task: Pick<TaskRow, "is_controversial" | "req
 /**
  * 完了操作の可否（§4.5.1）。可なら null、不可なら理由の文面を返す。
  *   * 共同確認者がいる場合は、担当者・共同確認者のみ
- *   * 辞退した運営者は、その後再び担当者になっていない限り完了操作できない（辞退で共同確認者を外してから
- *     単独で完了させる抜け道を塞ぐ・監査指摘・2026-10-07）
- *   * 共同確認が必要なタスクで共同確認者が不在の場合は、現担当者のみ
+ *   * 共同確認が必要なタスク（タスク自体の属性で判定）で共同確認者が不在の場合：
+ *       - 辞退した運営者は、その後再び担当者になっていない限り完了操作できない（辞退で共同確認者を外してから
+ *         単独で完了させる抜け道を塞ぐ・監査指摘・2026-10-07）
+ *       - 現担当者がいれば、完了操作は現担当者のみ
+ *   * 共同確認が不要なタスクは従来どおり運営者なら誰でも完了できる（辞退した人が結局対応を終えた場合も含む）
  */
 export function completionDeniedReason(task: TaskRow, actorId: string): string | null {
   if (task.co_signer) {
@@ -265,6 +267,7 @@ export function completionDeniedReason(task: TaskRow, actorId: string): string |
     }
     return null;
   }
+  if (!taskRequiresCosign(task)) return null;
   const declinedBy = (() => {
     try {
       return JSON.parse(task.declined_by || "[]") as string[];
@@ -273,9 +276,9 @@ export function completionDeniedReason(task: TaskRow, actorId: string): string |
     }
   })();
   if (declinedBy.includes(actorId) && actorId !== task.assignee) {
-    return "このタスクを辞退した運営者は完了操作を行えません。";
+    return "このタスクは共同確認（§4.5.1）の対象のため、辞退した運営者は完了操作を行えません。";
   }
-  if (taskRequiresCosign(task) && task.assignee && actorId !== task.assignee) {
+  if (task.assignee && actorId !== task.assignee) {
     return `このタスクは共同確認（§4.5.1）の対象ですが共同確認者が不在のため、完了操作は担当者（<@${task.assignee}>）のみ行えます。`;
   }
   return null;
