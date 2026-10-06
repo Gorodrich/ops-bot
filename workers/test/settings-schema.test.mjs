@@ -192,6 +192,13 @@ describe("validateSettingsDoc", () => {
     expect(validateSettingsDoc(d).some((e) => e.includes("crafty_audit_report_hour_utc"))).toBe(true);
   });
 
+  it("job_retry.processing_lease_sec は省略可・指定時は正の数値のみ許可する", () => {
+    expect(validateSettingsDoc(base()).some((e) => e.includes("processing_lease_sec"))).toBe(false);
+    const d = base();
+    d.settings.job_retry.processing_lease_sec = 0;
+    expect(validateSettingsDoc(d).some((e) => e.includes("job_retry.processing_lease_sec"))).toBe(true);
+  });
+
   it("job_retry.stale_after_sec が非正だと検出する", () => {
     const d = base();
     d.settings.job_retry.stale_after_sec = 0;

@@ -47,7 +47,7 @@ export async function runMemberDiff(env: Env): Promise<void> {
       await sendChannelMessage(
         env.DISCORD_BOT_TOKEN,
         channels.unei_only,
-        `【紐づけ自動削除】<@${link.discord_id}>（${link.minecraft_name}）：${reason}のため紐づけを解除し、ホワイトリスト削除を行いました。` +
+        `【紐づけ自動削除】<@${link.discord_id}>（${link.minecraft_name}）：${reason}のため紐づけを解除し、ホワイトリスト削除を依頼しました（反映はCT102の処理後。失敗が続いた場合は別途タスクが起票されます）。` +
           `個人開発領は自動削除していません（本人の届出が前提のため）。扱いは運営の判断に委ねます。`,
       ).catch(() => {});
     }
