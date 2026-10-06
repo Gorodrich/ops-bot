@@ -8,6 +8,8 @@ import { EPHEMERAL_FLAG, sendDirectMessage, sendFollowupMessage } from "../disco
 import { writeAuditLog } from "../auditLog";
 import {
   assignTask,
+  completionDeniedReason,
+  DECLINABLE_TASK_STATUSES,
   declineTask,
   getTask,
   holdTask,
@@ -227,9 +229,8 @@ export async function handleTaskDone(env: Env, interaction: Interaction, options
   if (!task) return immediate("指定されたタスクが見つかりません。");
   if (task.status === "done") return immediate("このタスクは既に完了しています。");
 
-  if (task.co_signer && operatorId !== task.assignee && operatorId !== task.co_signer) {
-    return immediate(`このタスクは共同確認（§4.5.1）が必要です。完了操作は担当者（<@${task.assignee}>）または共同確認者（<@${task.co_signer}>）のみ行えます。`);
-  }
+  const denied = completionDeniedReason(task, operatorId);
+  if (denied) return immediate(denied);
 
   const { fullyDone, role } = await recordCompletion(env, task, operatorId, evidence);
   await writeAuditLog(env, { actor: operatorId, action: fullyDone ? "task_done" : "task_done_partial_cosign", target: String(task.id), detail: { evidence, role } });
@@ -249,13 +250,18 @@ export async function handleTaskDecline(env: Env, interaction: Interaction, opti
   const task = await getTask(env, Number(taskIdRaw));
   if (!task) return immediate("指定されたタスクが見つかりません。");
   if (task.assignee !== operatorId) return immediate("このタスクの現在の担当者のみ辞退できます。");
+  if (!(DECLINABLE_TASK_STATUSES as readonly string[]).includes(task.status)) {
+    return immediate("このタスクは辞退できる状態ではありません（割当済・対応中のタスクのみ辞退できます）。");
+  }
 
   return deferred(env, interaction, async () => reassignAfterDecline(env, task, operatorId));
 }
 
 async function reassignAfterDecline(env: Env, task: TaskRow, decliningOperatorId: string): Promise<string> {
   const declinedHistory = JSON.parse(task.declined_by || "[]") as string[];
-  await declineTask(env, task.id, decliningOperatorId, declinedHistory);
+  if (!(await declineTask(env, task.id, decliningOperatorId, declinedHistory))) {
+    return `タスク #${task.id} は辞退できませんでした（担当者または状態が変わっています）。`;
+  }
   await writeAuditLog(env, { actor: decliningOperatorId, action: "task_declined", target: String(task.id) });
 
   const requiredTags = JSON.parse(task.required_tags || "[]") as string[];
