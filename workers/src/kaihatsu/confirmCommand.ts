@@ -3,7 +3,7 @@
 import type { Env } from "../env";
 import { InteractionResponseType, type Interaction } from "../discord/types";
 import { isPastDeadline } from "./domain";
-import { getApplication, markApplicationConfirmed, updateApplicationStatus, type ApplicationRow } from "./repo";
+import { getApplication, markApplicationConfirmed, transitionApplicationStatus, type ApplicationRow } from "./repo";
 import { finalizeApprovedSet, releaseHoldsForResolvedApplication } from "./phase3";
 import { tryResolveGroup } from "./groupResolution";
 import { buildProvisionalWithdrawnOrExpiredEmbed, CONFIRM_BUTTON_CUSTOM_ID_PREFIX, WITHDRAW_BUTTON_CUSTOM_ID_PREFIX } from "./templates";
@@ -63,7 +63,9 @@ export async function handleKaihatsuConfirmComponent(env: Env, interaction: Inte
   return {
     ack: { type: InteractionResponseType.UPDATE_MESSAGE, data: { content: "確認を受け付けました。処理しています…", components: [] } },
     followUp: async () => {
-      await markApplicationConfirmed(env, application.id);
+      // ack時点の読み取りから followUp までの間に、2回目の確認・取り下げ・期限切れが先に遷移させている
+      // 場合がある。遷移に勝った場合のみ以降の処理を行う（claimの二重登録を防ぐ・監査指摘・2026-10-07）。
+      if (!(await markApplicationConfirmed(env, application.id))) return;
       if (application.group_key) {
         await tryResolveGroup(env, application.group_key);
       } else {
@@ -77,7 +79,8 @@ export async function handleKaihatsuConfirmComponent(env: Env, interaction: Inte
 }
 
 export async function handleWithdrawOrExpire(env: Env, application: ApplicationRow, reason: "withdrawn" | "expired"): Promise<void> {
-  await updateApplicationStatus(env, application.id, reason);
+  // 確認（confirmed）との競合で負けた場合は何もしない（確認済みの届出を取り下げ扱いにしない）。
+  if (!(await transitionApplicationStatus(env, application.id, ["provisional"], reason))) return;
 
   if (application.group_key) {
     await tryResolveGroup(env, application.group_key);

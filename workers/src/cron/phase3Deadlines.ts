@@ -21,7 +21,8 @@ export async function processPhase3Deadlines(env: Env): Promise<void> {
     const members = await listApplicationsByGroup(env, group.group_key);
     for (const m of members) {
       if (m.status === "provisional" && isPastDeadline(nowIso, m.provisional_until)) {
-        await env.DB.prepare("UPDATE applications SET status = 'expired' WHERE id = ?").bind(m.id).run();
+        // 読み取り後に本人確認が済んだメンバーを期限切れで上書きしないよう、provisional のままの行に限る
+        await env.DB.prepare("UPDATE applications SET status = 'expired' WHERE id = ? AND status = 'provisional'").bind(m.id).run();
       }
     }
     await tryResolveGroup(env, group.group_key);

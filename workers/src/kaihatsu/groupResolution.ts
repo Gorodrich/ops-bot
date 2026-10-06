@@ -49,7 +49,8 @@ export async function tryResolveGroup(env: Env, groupKey: string): Promise<void>
 }
 
 async function rejectGroup(env: Env, groupKey: string, members: ApplicationRow[]): Promise<void> {
-  await resolveGroupStatus(env, groupKey, "rejected");
+  // 同時に複数のメンバー操作から呼ばれても、確定処理は1回だけ行う。
+  if (!(await resolveGroupStatus(env, groupKey, "rejected"))) return;
 
   const reasons: string[] = [];
   for (const m of members) {
@@ -89,7 +90,8 @@ async function rejectGroup(env: Env, groupKey: string, members: ApplicationRow[]
 }
 
 async function approveGroup(env: Env, groupKey: string, members: ApplicationRow[]): Promise<void> {
-  await resolveGroupStatus(env, groupKey, "approved");
+  // 同時に複数のメンバーの確認から呼ばれても、claim登録を伴う確定処理は1回だけ行う。
+  if (!(await resolveGroupStatus(env, groupKey, "approved"))) return;
 
   const ordered = orderGroupMembersForEvaluation(members.map((m) => ({ op: m.op, row: m })));
   for (const { row, op } of ordered) {
