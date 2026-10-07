@@ -12,6 +12,7 @@ import { writeAuditLog } from "../auditLog";
 import { enqueueJob } from "../jobs/queue";
 import { getActiveClaimByOwnerUuid, getOrCreateGroup, hasOpenApplication, insertApplication, supersedeClaim, updateApplicationStatus } from "./repo";
 import { KAIHATSU_MESSAGES, buildDeletedEmbed } from "./templates";
+import { notifyGroupMemberAddedByOther } from "./groupResolution";
 import type { DeferredResult } from "../accountLinks/authoriseCommand";
 
 export async function handleKaihatsuDelete(env: Env, interaction: Interaction, options: CommandOption[]): Promise<DeferredResult> {
@@ -94,7 +95,7 @@ async function addDeleteToGroup(env: Env, args: { representativeDiscordId: strin
   const claim = await getActiveClaimByOwnerUuid(env, link.minecraft_uuid);
   if (!claim) return `${args.targetMcName}: 削除対象の個人開発領が登録されていません。`;
 
-  await insertApplication(env, {
+  const applicationId = await insertApplication(env, {
     kind: "kaihatsu_delete",
     requester: link.discord_id,
     submittedBy: args.representativeDiscordId,
@@ -105,6 +106,14 @@ async function addDeleteToGroup(env: Env, args: { representativeDiscordId: strin
     ownerMcName: link.minecraft_name,
     targetClaimId: claim.id,
     op: "delete",
+  });
+  await notifyGroupMemberAddedByOther(env, {
+    applicationId,
+    targetDiscordId: link.discord_id,
+    representativeDiscordId: args.representativeDiscordId,
+    mcName: link.minecraft_name,
+    op: "delete",
+    group,
   });
 
   return KAIHATSU_MESSAGES.groupAccepted;

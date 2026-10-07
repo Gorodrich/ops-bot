@@ -12,6 +12,7 @@ import { enqueueJob } from "../jobs/queue";
 import { getAttachmentZoneCountDefault } from "../settings";
 import { bboxMayOverlap, playerNameFromFilename, unionZoneBBoxFromFilenames, worldBBoxFromLocJson, type WorldBBox } from "./domain";
 import { buildOverlapCandidatePool } from "./phase3";
+import { notifyGroupMemberAddedByOther } from "./groupResolution";
 import {
   getActiveClaimByOwnerUuid,
   getClaim,
@@ -276,7 +277,7 @@ async function addToGroup(
       continue;
     }
     const previousOwn = await getActiveClaimByOwnerUuid(env, link.minecraft_uuid);
-    await insertApplication(env, {
+    const applicationId = await insertApplication(env, {
       kind: "kaihatsu_set",
       requester: link.discord_id,
       submittedBy: args.representativeDiscordId,
@@ -286,6 +287,14 @@ async function addToGroup(
       ownerMcUuid: link.minecraft_uuid,
       ownerMcName: link.minecraft_name,
       op: "set",
+    });
+    await notifyGroupMemberAddedByOther(env, {
+      applicationId,
+      targetDiscordId: link.discord_id,
+      representativeDiscordId: args.representativeDiscordId,
+      mcName: link.minecraft_name,
+      op: "set",
+      group,
     });
     added += 1;
   }

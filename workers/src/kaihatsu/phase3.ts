@@ -20,6 +20,7 @@ import {
   listAllProvisionalApplications,
   listProtectedAreas,
   markApplicationHeld,
+  transitionApplicationStatus,
   setHeldBlockingApplication,
   clearHeldBlocking,
   supersedeClaim,
@@ -143,30 +144,39 @@ interface CtSetResult {
   overlap_pending?: Array<{ owner_name: string; pixels: number; ref_type: string | null; ref_id: number | string | null }>;
 }
 
-/** 仮承認へ遷移させる（§5.7.3：72時間の本人確認待ち）。 */
+/**
+ * 仮承認へ遷移させる（§5.7.3：72時間の本人確認待ち）。
+ * CT評価の投入時点の状態（expectedStatus：一括申請は processing、グループは collecting）のままの行に対してのみ
+ * 成立させ、成立した場合のみ true を返す。評価中に取り下げ・グループ却下等で既に結論が出た届出を、
+ * 遅れて届いた評価結果で仮承認へ戻さないため（監査指摘・2026-10-07）。
+ */
 export async function markProvisional(
   env: Env,
   application: ApplicationRow,
   result: CtSetResult,
   previousClaimId: number | null,
-): Promise<void> {
+  expectedStatus: "processing" | "collecting",
+): Promise<boolean> {
   const deadlines = await getDeadlines(env);
   const provisionalUntil = addHoursIso(new Date().toISOString().replace(/\.\d{3}Z$/, "Z"), deadlines.provisional_confirm_hours);
-  await env.DB.prepare(
-    "UPDATE applications SET status = 'provisional', provisional_until = ?, payload = ? WHERE id = ?",
+  const res = await env.DB.prepare(
+    "UPDATE applications SET status = 'provisional', provisional_until = ?, payload = ? WHERE id = ? AND status = ?",
   )
-    .bind(provisionalUntil, JSON.stringify({ ctResult: result, previousClaimId }), application.id)
+    .bind(provisionalUntil, JSON.stringify({ ctResult: result, previousClaimId }), application.id, expectedStatus)
     .run();
+  return (res.meta.changes ?? 0) === 1;
 }
 
 /** CTが held を返した場合の保留登録＋通知（§5.7.5）。 */
 export async function markHeldAndNotify(env: Env, application: ApplicationRow, result: CtSetResult): Promise<void> {
   const blockingRefType = result.held_blocking_ref_type ?? null;
   const blockingRefId = result.held_blocking_ref_id ?? null;
+  // 元の届出内容（添付・プレイヤー名等）は保留解放後の再審査（requeueSingleApplication）で必要になるため残す。
+  const original = safeJsonParse<Record<string, unknown>>(application.payload) ?? {};
   await markApplicationHeld(env, application.id, {
     blockingApplicationId: blockingRefType === "application" ? Number(blockingRefId) : null,
     blockingGroupKey: blockingRefType === "group" ? String(blockingRefId) : null,
-    payload: { ctResult: result },
+    payload: { ...original, ctResult: result },
   });
 
   const deadlines = await getDeadlines(env);
@@ -200,20 +210,34 @@ export async function finalizeApprovedSet(
 ): Promise<void> {
   if (result.outcome !== "approved") return;
 
-  if (previousClaimId) {
-    await supersedeClaim(env, previousClaimId, "superseded");
-  }
+  // 先に approved への遷移に勝ってから claim を登録する。単独申請は processing、本人確認を経たものは
+  // confirmed から遷移する。同じ届出に対する2回目の確定（同時の確認操作・グループ確定の重複・
+  // 遅延したCT完了報告）はここで負けて何もしない（監査指摘・2026-10-07）。
+  const fromStatuses = ["processing", "confirmed"];
+  if (!(await transitionApplicationStatus(env, application.id, fromStatuses, "approved"))) return;
+
   const ownerUuid = application.owner_mc_uuid ?? "";
   const ownerName = application.owner_mc_name ?? "";
-  const claimId = await insertClaim(env, {
-    ownerUuid,
-    ownerMcName: ownerName,
-    maskRef: result.mask_saved_path ?? "",
-    areaBlocks: result.area_blocks ?? 0,
-    loc1: result.loc1 ?? { x: 0, y: 64, z: 0 },
-    loc2: result.loc2 ?? { x: 0, y: 64, z: 0 },
-    applicationId: application.id,
-  });
+  let claimId: number;
+  try {
+    if (previousClaimId) {
+      await supersedeClaim(env, previousClaimId, "superseded");
+    }
+    claimId = await insertClaim(env, {
+      ownerUuid,
+      ownerMcName: ownerName,
+      maskRef: result.mask_saved_path ?? "",
+      areaBlocks: result.area_blocks ?? 0,
+      loc1: result.loc1 ?? { x: 0, y: 64, z: 0 },
+      loc2: result.loc2 ?? { x: 0, y: 64, z: 0 },
+      applicationId: application.id,
+    });
+  } catch (e) {
+    // claim登録に失敗した（1所有者1アクティブclaimの一意制約違反など）場合は、承認済みのまま
+    // claim のない届出を残さないよう元の状態へ戻して運営の確認に回す。
+    await env.DB.prepare("UPDATE applications SET status = ? WHERE id = ? AND status = 'approved'").bind(application.status, application.id).run();
+    throw e;
+  }
 
   const deadlines = await getDeadlines(env);
   const nowIso = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
@@ -281,6 +305,7 @@ export async function finalizeApprovedSet(
 /** 正式承認の確定（delete系・グループ内のdelete／代表者による他者delete）。 */
 export async function finalizeApprovedDelete(env: Env, application: ApplicationRow): Promise<void> {
   if (!application.target_claim_id) return;
+  if (!(await transitionApplicationStatus(env, application.id, ["confirmed"], "approved"))) return;
   const claim = await getClaim(env, application.target_claim_id);
   await supersedeClaim(env, application.target_claim_id, "deleted");
 
@@ -378,7 +403,9 @@ async function requeueSingleApplication(env: Env, application: ApplicationRow): 
   const original = safeJsonParse<{ attachments: Array<{ filename: string; url: string }>; mc_name: string; mc_uuid: string; previous_own_claim_id?: number | null }>(
     application.payload,
   );
-  if (!original) {
+  if (!original || !Array.isArray(original.attachments) || original.attachments.length === 0) {
+    // 添付を復元できないまま再審査ジョブを積むと必ず失敗するため、処理中のまま残さず失敗扱いにする
+    await updateApplicationStatus(env, application.id, "failed").catch(() => {});
     console.error("requeueSingleApplication: 元のpayloadを復元できません", application.id);
     return;
   }
@@ -431,3 +458,33 @@ async function requeueSingleApplication(env: Env, application: ApplicationRow): 
 }
 
 export { KAIHATSU_MESSAGES };
+
+/**
+ * 保留の原因が既に保留を続ける理由を失っているのに held のまま残っている届出を解放する（締切Cronのバックストップ）。
+ * 保留の原因となる届出が仮承認・本人確認済み・再審査中・保留中のいずれでもなくなっていれば解放し、
+ * 原因が正式承認済みなら重複確定として却下、それ以外（取り下げ・期限切れ・却下等）なら再審査に回す。
+ * グループ単位の保留も、グループが確定（成立・却下）済みなら同様に扱う（監査指摘・2026-10-07）。
+ */
+export async function releaseOrphanedHolds(env: Env): Promise<void> {
+  const byApplication = await env.DB.prepare(
+    `SELECT DISTINCT b.id AS id, b.status AS status, b.owner_mc_name AS owner_mc_name
+     FROM applications h JOIN applications b ON b.id = h.held_blocking_application_id
+     WHERE h.status = 'held' AND b.status NOT IN ('provisional','confirmed','processing','held')`,
+  ).all<{ id: number; status: string; owner_mc_name: string | null }>();
+  for (const b of byApplication.results ?? []) {
+    if (b.status === "approved") {
+      await releaseHoldsForResolvedApplication(env, b.id, "approved", b.owner_mc_name ?? undefined);
+    } else {
+      await releaseHoldsForResolvedApplication(env, b.id, "released");
+    }
+  }
+
+  const byGroup = await env.DB.prepare(
+    `SELECT DISTINCT g.group_key AS group_key, g.status AS status
+     FROM applications h JOIN application_groups g ON g.group_key = h.held_blocking_group_key
+     WHERE h.status = 'held' AND g.status IN ('approved','rejected')`,
+  ).all<{ group_key: string; status: string }>();
+  for (const g of byGroup.results ?? []) {
+    await releaseHoldsForResolvedGroup(env, g.group_key, g.status === "approved" ? "approved" : "released");
+  }
+}

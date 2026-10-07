@@ -3,6 +3,23 @@
 
 const API_BASE = "https://discord.com/api/v10";
 
+/**
+ * すべての投稿・編集・フォローアップに付ける allowed_mentions の既定値。
+ * 本Botが意図して通知するのは個々のユーザー（担当者・申請者等の <@id>）だけで、@everyone・@here・
+ * ロールへの一斉通知は一切行わない。本文には参加者のチケット本文に由来するLLMのタスク名なども
+ * 埋め込まれるため、それらが一斉通知として解釈されないよう Discord 側の解釈対象をユーザーに限る
+ * （監査指摘・2026-10-07）。
+ */
+export const DEFAULT_ALLOWED_MENTIONS = { parse: ["users"] } as const;
+
+/**
+ * 外部入力に由来するテキスト（LLMの出力等）を本文に埋め込む前に、メンション記法を無害化する。
+ * 表示上はほぼそのまま読めるが、Discord はメンションとして解釈しない（ゼロ幅スペースを挟む）。
+ */
+export function neutralizeMentions(text: string): string {
+  return text.replace(/@(everyone|here)/g, "@\u200b$1").replace(/<@/g, "<\u200b@");
+}
+
 export interface DiscordGuildMember {
   user?: { id: string; username: string };
   roles: string[];
@@ -104,7 +121,7 @@ export async function sendChannelMessage(
 ): Promise<void> {
   const res = await discordFetch(`/channels/${channelId}/messages`, botToken, {
     method: "POST",
-    body: JSON.stringify({ content, ...(embeds ? { embeds } : {}) }),
+    body: JSON.stringify({ content, ...(embeds ? { embeds } : {}), allowed_mentions: DEFAULT_ALLOWED_MENTIONS }),
   });
   if (!res.ok) throw new Error(`Discord API エラー（sendChannelMessage）: ${res.status} ${await res.text()}`);
 }
@@ -119,7 +136,7 @@ export async function sendChannelMessageWithComponents(
 ): Promise<string> {
   const res = await discordFetch(`/channels/${channelId}/messages`, botToken, {
     method: "POST",
-    body: JSON.stringify({ content, components, ...(embeds ? { embeds } : {}) }),
+    body: JSON.stringify({ content, components, ...(embeds ? { embeds } : {}), allowed_mentions: DEFAULT_ALLOWED_MENTIONS }),
   });
   if (!res.ok) throw new Error(`Discord API エラー（sendChannelMessageWithComponents）: ${res.status} ${await res.text()}`);
   const { id } = (await res.json()) as { id: string };
@@ -139,7 +156,7 @@ export async function sendChannelMessageWithFile(
   embeds?: unknown[],
 ): Promise<void> {
   const form = new FormData();
-  form.append("payload_json", JSON.stringify({ content, ...(embeds ? { embeds } : {}) }));
+  form.append("payload_json", JSON.stringify({ content, ...(embeds ? { embeds } : {}), allowed_mentions: DEFAULT_ALLOWED_MENTIONS }));
   form.append("files[0]", new Blob([file.bytes], { type: file.contentType ?? "image/png" }), file.filename);
   const res = await fetch(`${API_BASE}/channels/${channelId}/messages`, {
     method: "POST",
@@ -158,7 +175,7 @@ export async function editChannelMessage(
 ): Promise<void> {
   const res = await discordFetch(`/channels/${channelId}/messages/${messageId}`, botToken, {
     method: "PATCH",
-    body: JSON.stringify(body),
+    body: JSON.stringify({ ...body, allowed_mentions: DEFAULT_ALLOWED_MENTIONS }),
   });
   if (!res.ok) throw new Error(`Discord API エラー（editChannelMessage）: ${res.status} ${await res.text()}`);
 }
@@ -189,7 +206,7 @@ export async function sendDirectMessageWithComponents(
   const dmChannelId = await openDmChannel(botToken, userId);
   const res = await discordFetch(`/channels/${dmChannelId}/messages`, botToken, {
     method: "POST",
-    body: JSON.stringify({ content, components, ...(embeds ? { embeds } : {}) }),
+    body: JSON.stringify({ content, components, ...(embeds ? { embeds } : {}), allowed_mentions: DEFAULT_ALLOWED_MENTIONS }),
   });
   if (!res.ok) throw new Error(`Discord API エラー（sendDirectMessageWithComponents）: ${res.status} ${await res.text()}`);
 }
@@ -205,7 +222,7 @@ export async function sendDirectMessageWithComponentsAndFile(
 ): Promise<void> {
   const dmChannelId = await openDmChannel(botToken, userId);
   const form = new FormData();
-  form.append("payload_json", JSON.stringify({ content, components, ...(embeds ? { embeds } : {}) }));
+  form.append("payload_json", JSON.stringify({ content, components, ...(embeds ? { embeds } : {}), allowed_mentions: DEFAULT_ALLOWED_MENTIONS }));
   form.append("files[0]", new Blob([file.bytes], { type: file.contentType ?? "image/png" }), file.filename);
   const res = await fetch(`${API_BASE}/channels/${dmChannelId}/messages`, {
     method: "POST",
@@ -225,7 +242,7 @@ export async function sendChannelMessageWithFileAndComponents(
   embeds?: unknown[],
 ): Promise<void> {
   const form = new FormData();
-  form.append("payload_json", JSON.stringify({ content, components, ...(embeds ? { embeds } : {}) }));
+  form.append("payload_json", JSON.stringify({ content, components, ...(embeds ? { embeds } : {}), allowed_mentions: DEFAULT_ALLOWED_MENTIONS }));
   if (file) form.append("files[0]", new Blob([file.bytes], { type: file.contentType ?? "image/png" }), file.filename);
   const res = await fetch(`${API_BASE}/channels/${channelId}/messages`, {
     method: "POST",
@@ -244,7 +261,7 @@ export async function sendFollowupMessage(
   const res = await fetch(`${API_BASE}/webhooks/${appId}/${interactionToken}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ ...body, allowed_mentions: DEFAULT_ALLOWED_MENTIONS }),
   });
   if (!res.ok) throw new Error(`Discord API エラー（followup）: ${res.status} ${await res.text()}`);
 }

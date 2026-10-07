@@ -109,6 +109,7 @@ settings:
     crafty_retry_backoff_sec: 60
     crafty_audit_report_hour_utc: 9    # 日次ホワイトリスト突き合わせの投稿時刻（UTC）
     stale_after_sec: 300               # 一度もclaimされないままpendingが続いた場合のエスカレーション閾値（G-10）
+    processing_lease_sec: 1800         # claim後この秒数内に完了報告がなければ失敗扱いで回収・再試行（CT102停止時の取り残し防止）
 
   # ── 承認事項の分類表（Phase 4：§5.5）─────────────────────────
   # 表そのものは要件定義で確定済みの決定事項のため、以下は雛形ではなく実値として記入済み。

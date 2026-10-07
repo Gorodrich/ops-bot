@@ -13,7 +13,7 @@ import {
 } from "../discord/rest";
 import { writeAuditLog } from "../auditLog";
 import { addHoursIso } from "../kaihatsu/domain";
-import { getApplication, updateApplicationStatus, type ApplicationRow } from "../kaihatsu/repo";
+import { getApplication, getGroup, updateApplicationStatus, type ApplicationRow } from "../kaihatsu/repo";
 import {
   buildConfirmWithdrawButtonRow,
   buildProvisionalApprovedChannelEmbed,
@@ -139,6 +139,8 @@ async function handleKaihatsuSetCompletion(
   const result = outcome.result as CtSetResult;
   const application = await getApplication(env, payload.application_id);
   if (!application) return;
+  // 評価投入時の状態（processing）から既に動いている届出には、遅れて届いた評価結果を反映しない
+  if (application.status !== "processing") return;
 
   if (result.outcome === "held") {
     await markHeldAndNotify(env, application, result);
@@ -199,6 +201,9 @@ async function handleKaihatsuBatchCompletion(
   }
 
   const result = outcome.result as { players: Record<string, CtSetResult>; unresolved_players: string[]; skipped_files: string[] };
+  // 評価投入時の状態：グループのset側は締切後も collecting のまま評価を待ち、一括申請は processing。
+  // これ以外の状態の届出（評価中に取り下げ・グループ却下等で結論が出たもの）には評価結果を反映しない。
+  const expectedStatus = isGroup ? "collecting" : "processing";
   const prevByAppId = new Map(payload.players.map((p) => [p.application_id, p.previous_own_claim?.claim_id ?? null]));
 
   let anyRejected = false;
@@ -210,6 +215,12 @@ async function handleKaihatsuBatchCompletion(
     if (applicationId == null) continue;
     const application = await getApplication(env, applicationId);
     if (!application) continue;
+    if (application.status !== expectedStatus) continue;
+    if (isGroup && application.group_key) {
+      // 評価中にグループが却下等で確定していれば、メンバーを仮承認へ戻さない
+      const group = await getGroup(env, application.group_key);
+      if (group?.status !== "finalized") continue;
+    }
     if (application.group_key) groupKey = application.group_key;
 
     if (r.outcome === "held") {
@@ -239,7 +250,7 @@ async function handleKaihatsuBatchCompletion(
     }
 
     // approved（形式要件は充足。ここから72時間の本人確認・§5.7.3）
-    await markProvisional(env, application, r, prevByAppId.get(applicationId) ?? null);
+    if (!(await markProvisional(env, application, r, prevByAppId.get(applicationId) ?? null, expectedStatus))) continue;
     provisionalApplications.push({ application, result: r });
 
     await writeAuditLog(env, { actor: "bot", action: "kaihatsu_batch_member_provisional", target: String(applicationId), detail: { mc_name: playerName } });

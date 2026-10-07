@@ -206,8 +206,32 @@ export async function markDeleteMemberProvisional(env: Env, id: number, provisio
     .run();
 }
 
-export async function markApplicationConfirmed(env: Env, id: number): Promise<void> {
-  await env.DB.prepare("UPDATE applications SET status = 'confirmed', confirmed_at = ? WHERE id = ?").bind(nowIso(), id).run();
+/**
+ * 仮承認（provisional）→本人確認済み（confirmed）の状態遷移。期限内の provisional の行に対してのみ成立し、
+ * 成立した（この呼び出しが遷移に勝った）場合のみ true を返す。同時に届いた2回目の確認や、
+ * 取り下げ・期限切れとの競合で負けた側は false となり、以後の副作用（claim登録等）を行ってはならない。
+ */
+export async function markApplicationConfirmed(env: Env, id: number): Promise<boolean> {
+  const now = nowIso();
+  const res = await env.DB.prepare(
+    `UPDATE applications SET status = 'confirmed', confirmed_at = ?
+     WHERE id = ? AND status = 'provisional' AND (provisional_until IS NULL OR provisional_until > ?)`,
+  )
+    .bind(now, id, now)
+    .run();
+  return (res.meta.changes ?? 0) === 1;
+}
+
+/**
+ * 状態遷移の compare-and-set。現在の status が from のいずれかである場合のみ to へ変更し、
+ * 成立した場合のみ true を返す（JS側で読んだ行の状態を前提にした無条件UPDATEによる競合を防ぐ）。
+ */
+export async function transitionApplicationStatus(env: Env, id: number, from: string[], to: string): Promise<boolean> {
+  const placeholders = from.map(() => "?").join(",");
+  const res = await env.DB.prepare(`UPDATE applications SET status = ? WHERE id = ? AND status IN (${placeholders})`)
+    .bind(to, id, ...from)
+    .run();
+  return (res.meta.changes ?? 0) === 1;
 }
 
 export async function markApplicationHeld(
@@ -329,10 +353,14 @@ export async function finalizeGroup(env: Env, groupKey: string, deadlineIso: str
     .run();
 }
 
-export async function resolveGroupStatus(env: Env, groupKey: string, status: "approved" | "rejected"): Promise<void> {
-  await env.DB.prepare("UPDATE application_groups SET status = ?, resolved_at = ? WHERE group_key = ?")
+/** グループの確定（成立・却下）。未確定（collecting/finalized）のグループに対してのみ成立し、成立した場合のみ true を返す。 */
+export async function resolveGroupStatus(env: Env, groupKey: string, status: "approved" | "rejected"): Promise<boolean> {
+  const res = await env.DB.prepare(
+    "UPDATE application_groups SET status = ?, resolved_at = ? WHERE group_key = ? AND status IN ('collecting','finalized')",
+  )
     .bind(status, nowIso(), groupKey)
     .run();
+  return (res.meta.changes ?? 0) === 1;
 }
 
 export async function listFinalizedGroupsPastDeadline(env: Env, nowIsoValue: string): Promise<ApplicationGroupRow[]> {
@@ -341,6 +369,12 @@ export async function listFinalizedGroupsPastDeadline(env: Env, nowIsoValue: str
   )
     .bind(nowIsoValue)
     .all<ApplicationGroupRow>();
+  return res.results ?? [];
+}
+
+/** 受付中（collecting）の同時処理グループ一覧（受付中のまま放置されたグループの失効処理用）。 */
+export async function listCollectingGroups(env: Env): Promise<ApplicationGroupRow[]> {
+  const res = await env.DB.prepare("SELECT * FROM application_groups WHERE status = 'collecting' ORDER BY created_at ASC").all<ApplicationGroupRow>();
   return res.results ?? [];
 }
 

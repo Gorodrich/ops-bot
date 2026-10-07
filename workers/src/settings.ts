@@ -22,7 +22,14 @@ export interface JobRetrySetting {
   crafty_retry_backoff_sec: number;
   crafty_audit_report_hour_utc: number;
   stale_after_sec: number;
+  // claim（processing）後、完了報告がないまま経過したら失敗扱いで回収するまでの秒数。
+  // CT102のクラッシュ・強制停止・報告失敗でジョブが processing のまま取り残されないようにする（監査指摘・2026-10-07）。
+  // 1回のポーリングで取得したジョブは直列実行されるため、その合計所要時間より十分長くとること。
+  processing_lease_sec?: number;
 }
+
+/** processing_lease_sec 未設定時の既定値（秒）。 */
+export const DEFAULT_PROCESSING_LEASE_SEC = 1800;
 
 export interface DeadlinesSetting {
   vote_hours: number;

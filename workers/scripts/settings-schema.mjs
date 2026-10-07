@@ -299,6 +299,9 @@ export function validateSettingsDoc(doc) {
       if (!isPositiveNumber(j.stale_after_sec)) {
         push("job_retry.stale_after_sec: 正の数値（秒）である必要があります");
       }
+      if (j.processing_lease_sec !== undefined && !isPositiveNumber(j.processing_lease_sec)) {
+        push("job_retry.processing_lease_sec: 正の数値（秒）である必要があります（省略時は1800）");
+      }
     }
   }
 

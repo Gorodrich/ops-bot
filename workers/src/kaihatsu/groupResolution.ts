@@ -8,13 +8,18 @@
 // 場合と異なり再審査待ちにはしない。
 
 import type { Env } from "../env";
-import { getChannels } from "../settings";
-import { sendChannelMessage, sendDirectMessage } from "../discord/rest";
+import { getChannels, getDeadlines } from "../settings";
+import { sendChannelMessage, sendDirectMessage, sendDirectMessageWithComponents } from "../discord/rest";
 import { writeAuditLog } from "../auditLog";
-import { resolveGroup, orderGroupMembersForEvaluation, type GroupMemberStatus } from "./domain";
-import { listApplicationsByGroup, resolveGroupStatus, type ApplicationRow } from "./repo";
-import { finalizeApprovedDelete, finalizeApprovedSet, releaseHoldsForResolvedGroup } from "./phase3";
-import { buildGroupRejectedEmbed, buildProvisionalWithdrawnOrExpiredEmbed } from "./templates";
+import { addHoursIso, resolveGroup, orderGroupMembersForEvaluation, type GroupMemberStatus } from "./domain";
+import { listApplicationsByGroup, resolveGroupStatus, type ApplicationGroupRow, type ApplicationRow } from "./repo";
+import { finalizeApprovedDelete, finalizeApprovedSet, releaseHoldsForResolvedApplication, releaseHoldsForResolvedGroup } from "./phase3";
+import {
+  buildGroupMemberAddedNoticeEmbed,
+  buildGroupRejectedEmbed,
+  buildProvisionalWithdrawnOrExpiredEmbed,
+  buildWithdrawOnlyButtonRow,
+} from "./templates";
 
 function safeJsonParse<T>(text: string): T | null {
   try {
@@ -49,7 +54,8 @@ export async function tryResolveGroup(env: Env, groupKey: string): Promise<void>
 }
 
 async function rejectGroup(env: Env, groupKey: string, members: ApplicationRow[]): Promise<void> {
-  await resolveGroupStatus(env, groupKey, "rejected");
+  // 同時に複数のメンバー操作から呼ばれても、確定処理は1回だけ行う。
+  if (!(await resolveGroupStatus(env, groupKey, "rejected"))) return;
 
   const reasons: string[] = [];
   for (const m of members) {
@@ -61,9 +67,10 @@ async function rejectGroup(env: Env, groupKey: string, members: ApplicationRow[]
     }
   }
 
-  // まだ結論の出ていない（provisional/confirmed）メンバーもグループ却下に巻き込む。
+  // まだ結論の出ていない（collecting/provisional/confirmed）メンバーもグループ却下に巻き込む。
+  // collecting を残すと、受付中のまま却下されたグループの届出が対象者の新たな届出を塞ぎ続けるため含める。
   for (const m of members) {
-    if (m.status === "provisional" || m.status === "confirmed") {
+    if (m.status === "collecting" || m.status === "provisional" || m.status === "confirmed") {
       await env.DB.prepare("UPDATE applications SET status = 'rejected' WHERE id = ?").bind(m.id).run();
       const embed = buildProvisionalWithdrawnOrExpiredEmbed({
         mentionDiscordId: m.requester,
@@ -85,11 +92,18 @@ async function rejectGroup(env: Env, groupKey: string, members: ApplicationRow[]
     await sendChannelMessage(env.DISCORD_BOT_TOKEN, channels.kaihatsu_ryo, content, [embed]).catch(() => {});
   }
 
+  // 仮承認中のset側メンバーは、他者の届出から application 単位（held_blocking_application_id）で
+  // 保留の原因として参照されうる（phase3.ts の重複候補プール）。グループ単位の解放だけでは
+  // それらが held のまま残るため、メンバーごとにも解放する（監査指摘・2026-10-07）。
+  for (const m of members) {
+    if (m.op === "set") await releaseHoldsForResolvedApplication(env, m.id, "released");
+  }
   await releaseHoldsForResolvedGroup(env, groupKey, "released");
 }
 
 async function approveGroup(env: Env, groupKey: string, members: ApplicationRow[]): Promise<void> {
-  await resolveGroupStatus(env, groupKey, "approved");
+  // 同時に複数のメンバーの確認から呼ばれても、claim登録を伴う確定処理は1回だけ行う。
+  if (!(await resolveGroupStatus(env, groupKey, "approved"))) return;
 
   const ordered = orderGroupMembersForEvaluation(members.map((m) => ({ op: m.op, row: m })));
   for (const { row, op } of ordered) {
@@ -107,4 +121,31 @@ async function approveGroup(env: Env, groupKey: string, members: ApplicationRow[
 
   const lastOwnerName = members.find((m) => m.op === "set")?.owner_mc_name;
   await releaseHoldsForResolvedGroup(env, groupKey, "approved", lastOwnerName ?? undefined);
+}
+
+/**
+ * 受付中グループの失効時刻（作成から本人確認期限と同じ時間）。
+ * 受付中の届出は対象者の新たな届出を塞ぐため、代表者が締め切らないまま無期限に残さない（監査指摘・2026-10-07）。
+ */
+export async function collectingGroupExpiresAt(env: Env, group: Pick<ApplicationGroupRow, "created_at">): Promise<string> {
+  const deadlines = await getDeadlines(env);
+  return addHoursIso(group.created_at, deadlines.provisional_confirm_hours);
+}
+
+/** 他者が対象者を受付中グループへ追加したことを本人にDMで通知する（取り下げボタン付き）。本人自身の追加では送らない。 */
+export async function notifyGroupMemberAddedByOther(
+  env: Env,
+  args: { applicationId: number; targetDiscordId: string; representativeDiscordId: string; mcName: string; op: "set" | "delete"; group: Pick<ApplicationGroupRow, "created_at"> },
+): Promise<void> {
+  if (args.targetDiscordId === args.representativeDiscordId) return;
+  const expiresAt = await collectingGroupExpiresAt(env, args.group);
+  const embed = buildGroupMemberAddedNoticeEmbed({
+    mcName: args.mcName,
+    representativeMention: `<@${args.representativeDiscordId}>`,
+    op: args.op,
+    expiresDiscordTimestamp: `<t:${Math.floor(new Date(expiresAt).getTime() / 1000)}:f>`,
+  });
+  await sendDirectMessageWithComponents(env.DISCORD_BOT_TOKEN, args.targetDiscordId, "", buildWithdrawOnlyButtonRow(args.applicationId), [embed]).catch((e) =>
+    console.error("group member added notice DM failed", e),
+  );
 }

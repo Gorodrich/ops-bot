@@ -33,6 +33,7 @@ import { handleJobComplete } from "./jobs/completion";
 import { runMemberDiff } from "./cron/memberDiff";
 import { triggerWhitelistAudit } from "./cron/whitelistAudit";
 import { detectStaleJobs } from "./cron/staleJobs";
+import { reclaimExpiredLeases } from "./cron/leaseReclaim";
 import { processPhase3Deadlines } from "./cron/phase3Deadlines";
 import { processVoteDeadlines } from "./cron/voteDeadlines";
 import { processTaskHoldResume } from "./cron/taskHoldResume";
@@ -64,7 +65,7 @@ import { resolveUneiActor } from "./staff/subaccountEligibility";
 // Cloudflare Workers Free枠はアカウント全体でcronトリガー5件までのため、
 // Phase 5で追加した4ジョブは新規cronを増やさず、既存の2つの発火（10分ごと／15分ごと）に相乗りさせる。
 // 各ジョブは絶対時刻ベースで対象を判定するため（§9）、発火頻度が上がっても二重処理は起きない。
-const CRON_STALE_JOBS = "*/5 * * * *"; // 5分ごと：job_queue の滞留検知（Phase 0で確保した枠。G-10）
+const CRON_STALE_JOBS = "*/5 * * * *"; // 5分ごと：job_queue の滞留検知（Phase 0で確保した枠。G-10）＋処理中リースの回収
 const CRON_MEMBER_DIFF = "0 * * * *"; // 毎時0分：脱退・資格喪失の差分検知（§6.4.3、既定1時間ごと）
 const CRON_WHITELIST_AUDIT = "0 9 * * *"; // 毎日09:00 UTC：日次ホワイトリスト突合（§6.4.4）
 const CRON_FAST = "*/10 * * * *"; // 10分ごと：投票締切（§5.2・§5.3）＋保留タスク自動復帰（§4.2）＋投票締切3h前リマインド（§4.7）
@@ -110,7 +111,7 @@ export default {
 
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     if (event.cron === CRON_STALE_JOBS) {
-      ctx.waitUntil(detectStaleJobs(env));
+      ctx.waitUntil(Promise.all([detectStaleJobs(env), reclaimExpiredLeases(env)]));
     } else if (event.cron === CRON_MEMBER_DIFF) {
       ctx.waitUntil(runMemberDiff(env));
     } else if (event.cron === CRON_WHITELIST_AUDIT) {

@@ -223,14 +223,65 @@ export async function recordCompletion(
   return { fullyDone: false, role };
 }
 
-/** 辞退：辞退者を除外リストに積んだ上で未割当に戻す（§4.2：即座に次順位の運営者へ再割当する前段）。 */
-export async function declineTask(env: Env, id: number, declinedBy: string, declinedByHistory: string[]): Promise<void> {
+/** 辞退できる状態（完了操作に着手済みの co_sign_pending や完了・保留中のタスクは辞退させない）。 */
+export const DECLINABLE_TASK_STATUSES = ["assigned", "in_progress"] as const;
+
+/**
+ * 辞退：辞退者を除外リストに積んだ上で未割当に戻す（§4.2：即座に次順位の運営者へ再割当する前段）。
+ * 現担当者が辞退者本人で、辞退できる状態のタスクに対してのみ成立し、成立した場合のみ true を返す。
+ */
+export async function declineTask(env: Env, id: number, declinedBy: string, declinedByHistory: string[]): Promise<boolean> {
   const updated = Array.from(new Set([...declinedByHistory, declinedBy]));
-  await env.DB.prepare(
-    "UPDATE tasks SET status = 'unassigned', assignee = NULL, co_signer = NULL, co_sign_status = NULL, assigned_at = NULL, declined_by = ? WHERE id = ?",
+  const res = await env.DB.prepare(
+    `UPDATE tasks SET status = 'unassigned', assignee = NULL, co_signer = NULL, co_sign_status = NULL, assigned_at = NULL, declined_by = ?
+     WHERE id = ? AND assignee = ? AND status IN ('assigned','in_progress')`,
   )
-    .bind(JSON.stringify(updated), id)
+    .bind(JSON.stringify(updated), id, declinedBy)
     .run();
+  return (res.meta.changes ?? 0) === 1;
+}
+
+/** タスクの属性上、共同確認（§4.5.1）が必要か。担当者の入れ替えで変わる co_signer 列ではなく、タスク自体の属性で判定する。 */
+export function taskRequiresCosign(task: Pick<TaskRow, "is_controversial" | "required_tags">): boolean {
+  if (task.is_controversial === 1) return true;
+  try {
+    return (JSON.parse(task.required_tags || "[]") as string[]).includes("controversial_review");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 完了操作の可否（§4.5.1）。可なら null、不可なら理由の文面を返す。
+ *   * 共同確認者がいる場合は、担当者・共同確認者のみ
+ *   * 共同確認が必要なタスク（タスク自体の属性で判定）で共同確認者が不在の場合：
+ *       - 辞退した運営者は、その後再び担当者になっていない限り完了操作できない（辞退で共同確認者を外してから
+ *         単独で完了させる抜け道を塞ぐ・監査指摘・2026-10-07）
+ *       - 現担当者がいれば、完了操作は現担当者のみ
+ *   * 共同確認が不要なタスクは従来どおり運営者なら誰でも完了できる（辞退した人が結局対応を終えた場合も含む）
+ */
+export function completionDeniedReason(task: TaskRow, actorId: string): string | null {
+  if (task.co_signer) {
+    if (actorId !== task.assignee && actorId !== task.co_signer) {
+      return `このタスクは共同確認（§4.5.1）が必要です。完了操作は担当者（<@${task.assignee}>）または共同確認者（<@${task.co_signer}>）のみ行えます。`;
+    }
+    return null;
+  }
+  if (!taskRequiresCosign(task)) return null;
+  const declinedBy = (() => {
+    try {
+      return JSON.parse(task.declined_by || "[]") as string[];
+    } catch {
+      return [];
+    }
+  })();
+  if (declinedBy.includes(actorId) && actorId !== task.assignee) {
+    return "このタスクは共同確認（§4.5.1）の対象のため、辞退した運営者は完了操作を行えません。";
+  }
+  if (task.assignee && actorId !== task.assignee) {
+    return `このタスクは共同確認（§4.5.1）の対象ですが共同確認者が不在のため、完了操作は担当者（<@${task.assignee}>）のみ行えます。`;
+  }
+  return null;
 }
 
 /** 保留（§4.2：再開予定日必須。due_at＝本来の期限とは別にresume_atで管理する・Phase4の不具合修正）。 */
