@@ -164,8 +164,8 @@ describe("validateSettingsDoc", () => {
     expect(validateSettingsDoc(ok)).toEqual([]);
   });
 
-  it("KNOWN_KEYS は migration の settings キーと一致（15件・参加者投票でparticipant_approval_types追加）", () => {
-    expect(KNOWN_KEYS).toHaveLength(15);
+  it("KNOWN_KEYS は migration の settings キーと一致（16件・障害お知らせでincident_notice追加）", () => {
+    expect(KNOWN_KEYS).toHaveLength(16);
   });
 
   it("participant_approval_types が空だと検出する（参加者投票）", () => {

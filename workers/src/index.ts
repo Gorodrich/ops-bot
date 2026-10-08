@@ -60,6 +60,14 @@ import { VOTE_ABSTAIN_BUTTON_PREFIX, VOTE_NO_BUTTON_PREFIX, VOTE_YES_BUTTON_PREF
 import { handleLlmCandidateButton } from "./llm/candidateReview";
 import { LLM_CANDIDATE_ACCEPT_BUTTON_PREFIX, LLM_CANDIDATE_REJECT_BUTTON_PREFIX } from "./llm/templates";
 import { resolveUneiActor } from "./staff/subaccountEligibility";
+import {
+  handleShogaiIncidentAutocomplete,
+  handleShogaiModalSubmit,
+  handleShogaiResolve,
+  handleShogaiStart,
+  handleShogaiUpdate,
+  SHOGAI_MODAL_CUSTOM_ID_PREFIX,
+} from "./incidents/shogaiCommand";
 
 // Cron式ごとの役割（wrangler.jsonc の triggers.crons と対応）。
 // Cloudflare Workers Free枠はアカウント全体でcronトリガー5件までのため、
@@ -200,7 +208,7 @@ async function routeParticipantVote(env: Env, interaction: Interaction): Promise
 async function buildAutocompleteResponse(env: Env, interaction: Interaction): Promise<{ type: number; data: { choices: Array<{ name: string; value: string }> } }> {
   const empty = { type: InteractionResponseType.APPLICATION_COMMAND_AUTOCOMPLETE_RESULT, data: { choices: [] } };
   const name = interaction.data?.name;
-  if (name !== "modvote" && name !== "vote" && name !== "task") return empty;
+  if (name !== "modvote" && name !== "vote" && name !== "task" && name !== "shogai") return empty;
 
   const sub = subcommand(interaction.data?.options);
   const focused = focusedOption(sub?.options);
@@ -229,7 +237,27 @@ async function buildAutocompleteResponse(env: Env, interaction: Interaction): Pr
     return { type: InteractionResponseType.APPLICATION_COMMAND_AUTOCOMPLETE_RESULT, data: { choices } };
   }
 
+  if (name === "shogai" && focused.name === "incident") {
+    // /shogai は全サブコマンドが運営者ロール必須のため、候補表示でも同じ実行資格を要求する。
+    const resolved = await resolveUneiActor(env, interaction.member);
+    if (!resolved.ok) return empty;
+    const choices = await handleShogaiIncidentAutocomplete(env, String(focused.value ?? ""));
+    return { type: InteractionResponseType.APPLICATION_COMMAND_AUTOCOMPLETE_RESULT, data: { choices } };
+  }
+
   return empty;
+}
+
+/** /shogai（障害お知らせ・decisions.md #66）。 */
+async function routeShogai(env: Env, interaction: Interaction): Promise<DeferredResult> {
+  const sub = subcommand(interaction.data?.options);
+  if (sub?.name === "start") return handleShogaiStart(env, interaction, sub.options);
+  if (sub?.name === "update") return handleShogaiUpdate(env, interaction, sub.options);
+  if (sub?.name === "resolve") return handleShogaiResolve(env, interaction, sub.options);
+  return {
+    ack: { type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: "未対応のサブコマンドです（start / update / resolve のみ対応）。" } },
+    followUp: async () => {},
+  };
 }
 
 async function routeTask(env: Env, interaction: Interaction): Promise<DeferredResult> {
@@ -330,7 +358,9 @@ async function handleInteractions(request: Request, env: Env, ctx: ExecutionCont
                           ? await routeOps(env, interaction)
                           : name === "subaccount"
                             ? await routeSubaccount(env, interaction)
-                            : null;
+                            : name === "shogai"
+                              ? await routeShogai(env, interaction)
+                              : null;
 
     if (!result) {
       return Response.json({
@@ -396,6 +426,11 @@ async function handleInteractions(request: Request, env: Env, ctx: ExecutionCont
     const customId = interaction.data?.custom_id ?? "";
     if (customId.startsWith(REVOKE_MODAL_CUSTOM_ID_PREFIX)) {
       const result = await handleRevokeModalSubmit(env, interaction);
+      ctx.waitUntil(result.followUp().catch((e) => console.error("followUp failed", e)));
+      return Response.json(result.ack);
+    }
+    if (customId.startsWith(SHOGAI_MODAL_CUSTOM_ID_PREFIX)) {
+      const result = await handleShogaiModalSubmit(env, interaction);
       ctx.waitUntil(result.followUp().catch((e) => console.error("followUp failed", e)));
       return Response.json(result.ack);
     }

@@ -25,6 +25,7 @@ export const KNOWN_KEYS = [
   "participant_approval_types",
   "task_target_days",
   "llm",
+  "incident_notice",
 ];
 
 // 督促の段階的エスカレーション（§4.7）で許される送信先
@@ -397,6 +398,16 @@ export function validateSettingsDoc(doc) {
       if (typeof l.shadow_mode !== "boolean") {
         push("llm.shadow_mode: 真偽値である必要があります（Phase 7：falseで本稼働に切り替わる）");
       }
+    }
+  }
+
+  // 障害お知らせ（/shogai・decisions.md #66）。任意キー：未投入でも第1報の影響範囲の初期値が空になるだけ。
+  if (has("incident_notice")) {
+    const n = s.incident_notice;
+    if (!isPlainObject(n)) {
+      push("incident_notice はマッピングである必要があります");
+    } else if (!Array.isArray(n.services) || n.services.some((v) => typeof v !== "string" || v.trim() === "")) {
+      push("incident_notice.services: 空でない文字列（サービス名）の配列である必要があります");
     }
   }
 

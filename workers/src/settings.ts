@@ -163,6 +163,19 @@ export const getTaskTargetDays = (env: Env) => getSetting<TaskTargetDaysSetting>
 export const getTicketToolSetting = (env: Env) => getSetting<TicketToolSetting>(env, "ticket_tool");
 export const getLlmSetting = (env: Env) => getSetting<LlmSetting>(env, "llm");
 
+// 障害お知らせ（/shogai・decisions.md #66）。services は第1報の「影響範囲」欄に初期表示するサービス名の一覧。
+export interface IncidentNoticeSetting {
+  services: string[];
+}
+
+/** 任意キーのため、未投入でも空の一覧として扱う（入力欄の初期値が変わるだけで機能は止めない）。 */
+export async function getIncidentNoticeSetting(env: Env): Promise<IncidentNoticeSetting> {
+  const row = await env.DB.prepare("SELECT value FROM settings WHERE key = 'incident_notice'").first<{ value: string }>();
+  if (!row) return { services: [] };
+  const parsed = JSON.parse(row.value) as Partial<IncidentNoticeSetting>;
+  return { services: Array.isArray(parsed.services) ? parsed.services : [] };
+}
+
 /**
  * settings.llm の一部フィールドだけを更新する（read-modify-write）。
  * 用途：自動一時停止（連続失敗検知）／`/ops llm pause`・`resume`（§7.4）。
