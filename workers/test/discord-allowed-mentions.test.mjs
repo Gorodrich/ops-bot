@@ -7,6 +7,7 @@ import {
   DEFAULT_ALLOWED_MENTIONS,
   editChannelMessage,
   neutralizeMentions,
+  sendAnnouncementMessage,
   sendChannelMessage,
   sendChannelMessageWithComponents,
   sendChannelMessageWithFile,
@@ -55,6 +56,24 @@ describe("allowed_mentions", () => {
     }
     expect(DEFAULT_ALLOWED_MENTIONS.parse).not.toContain("everyone");
     expect(DEFAULT_ALLOWED_MENTIONS.parse).not.toContain("roles");
+  });
+});
+
+describe("sendAnnouncementMessage（障害の全般用お知らせ・唯一の例外）", () => {
+  let fetchMock;
+
+  beforeEach(() => {
+    fetchMock = mockFetch();
+  });
+
+  afterEach(() => fetchMock.restore());
+
+  it("@everyone は指定時のみ解釈させ、ロール・ユーザーのメンションはどちらでも解釈させない", async () => {
+    await sendAnnouncementMessage("tok", "C", HOSTILE, true);
+    await sendAnnouncementMessage("tok", "C", HOSTILE, false);
+    const [on, off] = await Promise.all(fetchMock.calls.map(bodyOf));
+    expect(on.allowed_mentions).toEqual({ parse: ["everyone"] });
+    expect(off.allowed_mentions).toEqual({ parse: [] });
   });
 });
 

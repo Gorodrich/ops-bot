@@ -126,6 +126,26 @@ export async function sendChannelMessage(
   if (!res.ok) throw new Error(`Discord API エラー（sendChannelMessage）: ${res.status} ${await res.text()}`);
 }
 
+/**
+ * 障害の全般用お知らせ（/shogai・decisions.md #66）専用の投稿。DEFAULT_ALLOWED_MENTIONS の唯一の例外で、
+ * mentionEveryone が true のときだけ本文の @everyone を通知として解釈させる（マイクラ鯖に入れない障害の告知）。
+ * ロール・ユーザーへのメンションはどちらの場合も解釈させない。投稿したメッセージIDを返す。
+ */
+export async function sendAnnouncementMessage(
+  botToken: string,
+  channelId: string,
+  content: string,
+  mentionEveryone: boolean,
+): Promise<string> {
+  const res = await discordFetch(`/channels/${channelId}/messages`, botToken, {
+    method: "POST",
+    body: JSON.stringify({ content, allowed_mentions: { parse: mentionEveryone ? ["everyone"] : [] } }),
+  });
+  if (!res.ok) throw new Error(`Discord API エラー（sendAnnouncementMessage）: ${res.status} ${await res.text()}`);
+  const { id } = (await res.json()) as { id: string };
+  return id;
+}
+
 /** ボタン付きチャンネル投稿（画像なし）。投稿したメッセージIDを返す（記名許可・投票の対象メッセージ編集用）。 */
 export async function sendChannelMessageWithComponents(
   botToken: string,

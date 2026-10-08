@@ -477,6 +477,61 @@ const commands = [
       },
     ],
   },
+  // 障害お知らせ（decisions.md #66）。長文の各項目は実行後に開くモーダルで入力する。
+  {
+    name: "shogai",
+    description: "障害のお知らせを「サーバーお知らせ」チャンネルにEmbedで投稿します",
+    options: [
+      {
+        type: OPTION_TYPE.SUB_COMMAND,
+        name: "start",
+        description: "第1報を出します（障害を新規登録）",
+        options: [
+          { type: OPTION_TYPE.STRING, name: "subject", description: "何が（例：Minecraftサーバー）。見出し「◯◯障害」になります", required: true, max_length: 50 },
+          { type: OPTION_TYPE.STRING, name: "status", description: "今の状態（例：サーバー停止中）。見出しの括弧内になります", required: true, max_length: 50 },
+          { type: OPTION_TYPE.BOOLEAN, name: "minecraft_down", description: "マイクラ鯖に入れない障害か（True＝全般用お知らせを【重要】版・@everyone付きで投稿）", required: true },
+          { type: OPTION_TYPE.STRING, name: "started_at", description: "発生日時（例：14:05、10/8 14:05）。省略時は現在時刻", required: false },
+          { type: OPTION_TYPE.STRING, name: "next", description: "次回のお知らせ（例：15:00 → 「15:00までに第2報を出します」）。省略時は「状況に変化があり次第」", required: false },
+          { type: OPTION_TYPE.STRING, name: "cause_short", description: "全般用お知らせ：原因の短い言い方（例：停電）。省略時は「原因を調査中の障害」", required: false, max_length: 50 },
+          { type: OPTION_TYPE.STRING, name: "resume_eta", description: "全般用お知らせ：再開見込み（例：18:00、10/9 12:00、10月9日以降）。省略時は「未定」", required: false, max_length: 50 },
+          {
+            type: OPTION_TYPE.STRING,
+            name: "world_data",
+            description: "全般用お知らせ：ワールドデータの状態（省略時は「調査中」）",
+            required: false,
+            choices: [
+              { name: "無事を確認済み", value: "safe" },
+              { name: "調査中", value: "investigating" },
+            ],
+          },
+          { type: OPTION_TYPE.BOOLEAN, name: "announce", description: "全般用お知らせにも投稿するか（省略時はTrue）", required: false },
+        ],
+      },
+      {
+        type: OPTION_TYPE.SUB_COMMAND,
+        name: "update",
+        description: "第N報（続報）を出します。前報の内容が入力欄に入った状態で開きます",
+        options: [
+          { type: OPTION_TYPE.STRING, name: "incident", description: "対象の障害（継続中が1件だけなら省略可）", required: false, autocomplete: true },
+          { type: OPTION_TYPE.STRING, name: "status", description: "今の状態の要約（省略時は前報と同じ）", required: false, max_length: 50 },
+          { type: OPTION_TYPE.STRING, name: "next", description: "次回のお知らせ（例：16:00 → 「16:00までに第N+1報を出します」）", required: false },
+        ],
+      },
+      {
+        type: OPTION_TYPE.SUB_COMMAND,
+        name: "resolve",
+        description: "復旧報を出します（障害を終了）",
+        options: [
+          { type: OPTION_TYPE.STRING, name: "incident", description: "対象の障害（継続中が1件だけなら省略可）", required: false, autocomplete: true },
+          { type: OPTION_TYPE.STRING, name: "resolved_at", description: "復旧日時（例：18:30、10/8 18:30）。省略時は現在時刻", required: false },
+          { type: OPTION_TYPE.STRING, name: "compensation", description: "補填（省略時は「なし」）", required: false },
+          { type: OPTION_TYPE.STRING, name: "status", description: "見出しの括弧内（省略時は「全サービス復旧」）", required: false, max_length: 50 },
+          { type: OPTION_TYPE.STRING, name: "rollback_to", description: "ワールドを巻き戻した場合、戻した時点（例：3:00、10/8 3:00）。省略時は「影響なし」", required: false },
+          { type: OPTION_TYPE.BOOLEAN, name: "announce", description: "全般用お知らせにも投稿するか（省略時はTrue）", required: false },
+        ],
+      },
+    ],
+  },
 ];
 
 async function main() {

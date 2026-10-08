@@ -28,6 +28,8 @@ settings:
     participant_vote_hall: "000000000000000000" # 参加者投票「/vote」の投稿先。デバッグ用に当面vote_hallと同じ値でよい（2026-09-06決定）
     application_status: "000000000000000000" # 参加者向け「申請受付状況」表示チャンネル
     notify_default: "000000000000000000"     # Bot通知先（既定）
+    server_notice: "000000000000000000"     # 「サーバーお知らせ」：/shogai の障害詳細報（第N報・復旧報）の投稿先（decisions.md #66）
+    general_notice: "000000000000000000"    # 「全般用お知らせ」：/shogai の第1報・復旧報の短いアナウンス先（decisions.md #66）
 
   # ── ticket tool（docs/appendix/ticket-tool-spec.md §6）──────
   ticket_tool:
@@ -256,3 +258,8 @@ settings:
     consecutive_failure_pause_threshold: 5        # 連続失敗でLLM層を自動一時停止（§7.4）
     paused: false
     shadow_mode: true                             # Phase 7：ドライラン完了後にfalseへ（本稼働）
+
+  # ── 障害お知らせ（/shogai・decisions.md #66）──────────────
+  # services：第1報の「影響範囲」欄に初期表示するサービス名（「- 名前：通常どおり」の箇条書きになる）。
+  incident_notice:
+    services: ["Minecraftサーバー", "Dynmap", "サーバーポータル", "監視システム", "運営Bot"]
