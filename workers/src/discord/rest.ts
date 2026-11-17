@@ -21,8 +21,11 @@ export function neutralizeMentions(text: string): string {
 }
 
 export interface DiscordGuildMember {
-  user?: { id: string; username: string };
+  // global_name・avatar・nick は rule-builder への表示名・アイコンの受け渡しで使う（decisions.md #67）
+  user?: { id: string; username: string; global_name?: string | null; avatar?: string | null };
   roles: string[];
+  nick?: string | null;
+  avatar?: string | null;
 }
 
 async function discordFetch(path: string, botToken: string, init?: RequestInit): Promise<Response> {
