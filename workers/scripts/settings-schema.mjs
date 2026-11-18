@@ -158,6 +158,9 @@ export function validateSettingsDoc(doc) {
       if (!isPositiveNumber(d.quick_vote_minutes)) {
         push("deadlines.quick_vote_minutes: 正の数値（分）である必要があります（§5.3：短縮投票の締切）");
       }
+      if (d.participant_discussion_hours !== undefined && !isPositiveNumber(d.participant_discussion_hours)) {
+        push("deadlines.participant_discussion_hours: 正の数値（時間）である必要があります（rule-builder の参加者協議の長さ）");
+      }
     }
   }
 

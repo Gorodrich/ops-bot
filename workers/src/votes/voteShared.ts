@@ -20,6 +20,7 @@ import {
   VOTE_YES_BUTTON_PREFIX,
 } from "./templates";
 import type { DeferredResult } from "../accountLinks/authoriseCommand";
+import { onRuleProposalVoteTallied } from "../ruleBuilder/proposals";
 
 function nowIso(): string {
   return new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
@@ -86,6 +87,11 @@ export async function closeAndTallyVote(env: Env, vote: VoteRow, endedEarlyBy?: 
     target: String(vote.id),
     detail: { yes: result.yes, no: result.no, abstain: result.abstain, passed: result.passed, originalClosesAt: vote.closes_at, voterScope: vote.voter_scope },
   });
+
+  // rule-builder の改正案に紐づく投票なら、手続の状態を進める（rule-builder は getProposalStatus で問い合わせる）
+  if (vote.rule_proposal_id) {
+    await onRuleProposalVoteTallied(env, vote, result).catch((e) => console.error(`改正案 ${vote.rule_proposal_id} の状態を進められませんでした`, e));
+  }
 
   return { vote, result };
 }

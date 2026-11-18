@@ -7,41 +7,23 @@
 
 import type { Env } from "../env";
 import { InteractionResponseType, type CommandOption, type Interaction, optionValue } from "../discord/types";
-import { getChannels, getDeadlines, getParticipantApprovalTypes } from "../settings";
+import { getParticipantApprovalTypes } from "../settings";
 import { resolveUneiActor } from "../staff/subaccountEligibility";
-import { sendChannelMessageWithComponents, sendFollowupMessage, EPHEMERAL_FLAG } from "../discord/rest";
-import { writeAuditLog } from "../auditLog";
-import { addHoursIso, tallyVote } from "./domain";
-import { computeCurrentParticipantEligibleVoters } from "./eligibility";
-import {
-  getVote,
-  insertVote,
-  listOpenVotes,
-  searchVotesForAutocomplete,
-  setVoteMessage,
-  setVoteTaskId,
-} from "./repo";
-import {
-  buildVoteButtonRow,
-  buildVoteOpenedEmbed,
-  buildVoteStatusLine,
-  VOTE_MESSAGES,
-} from "./templates";
+import { sendFollowupMessage, EPHEMERAL_FLAG } from "../discord/rest";
+import type { tallyVote } from "./domain";
+import { openParticipantVote } from "./open";
+import { getVote, listOpenVotes, searchVotesForAutocomplete } from "./repo";
+import { buildVoteStatusLine, VOTE_MESSAGES } from "./templates";
 import { closeAndTallyVote } from "./voteShared";
 import type { DeferredResult } from "../accountLinks/authoriseCommand";
 
 const PARTICIPANT_METHOD_LABEL = "秘密投票（参加者による承認）";
-const PARTICIPANT_ELIGIBLE_COUNT_NOTE = "母数（「人民」ロール保有者数）";
 
 function immediate(content: string): DeferredResult {
   return {
     ack: { type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content, flags: EPHEMERAL_FLAG } },
     followUp: async () => {},
   };
-}
-
-function nowIso(): string {
-  return new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
 function discordTimestamp(iso: string): string {
@@ -58,80 +40,14 @@ export async function handleParticipantVoteStart(env: Env, interaction: Interact
   if (!approvalKey || !subject) return immediate("approval_key・subject オプションが必要です。");
 
   const approvalTypes = await getParticipantApprovalTypes(env);
-  const entry = approvalTypes[approvalKey];
-  if (!entry) return immediate(VOTE_MESSAGES.unknownParticipantApprovalKey);
-
-  const quorumType = entry.quorum_type ?? "voters_majority";
-  const threshold = entry.threshold ?? 0.5;
+  if (!approvalTypes[approvalKey]) return immediate(VOTE_MESSAGES.unknownParticipantApprovalKey);
 
   return {
     ack: { type: InteractionResponseType.DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE, data: { flags: EPHEMERAL_FLAG } },
     followUp: async () => {
-      const eligible = await computeCurrentParticipantEligibleVoters(env);
-      if (eligible.length === 0) {
-        await sendFollowupMessage(env.DISCORD_APP_ID, interaction.token, { content: VOTE_MESSAGES.noEligibleVotersParticipant, flags: EPHEMERAL_FLAG });
-        return;
-      }
-
-      // 期限は運営投票と同じ24時間（settings.deadlines.vote_hours）を流用する（決定事項）。
-      const deadlines = await getDeadlines(env);
-      const startedAt = nowIso();
-      const closesAt = addHoursIso(startedAt, deadlines.vote_hours);
-
-      const voteId = await insertVote(env, {
-        subject,
-        approvalKey,
-        voterScope: "participant",
-        method: "secret",
-        quorumType,
-        threshold,
-        excludeTarget: null,
-        closesAt,
-        eligibleCount: eligible.length,
-        createdBy: operatorId,
-      });
-
-      const channels = await getChannels(env);
-      const channelId = channels.participant_vote_hall;
-      if (!channelId) {
-        await sendFollowupMessage(env.DISCORD_APP_ID, interaction.token, {
-          content: "参加者投票チャンネル（settings.channels.participant_vote_hall）が未設定のため、投票は作成しましたが投稿できませんでした。",
-          flags: EPHEMERAL_FLAG,
-        });
-        return;
-      }
-
-      const { content, embed } = buildVoteOpenedEmbed({
-        voteId,
-        label: entry.label,
-        subject,
-        method: "secret",
-        methodLabel: PARTICIPANT_METHOD_LABEL,
-        eligibleCount: eligible.length,
-        eligibleCountNote: PARTICIPANT_ELIGIBLE_COUNT_NOTE,
-        closesAtDiscordTimestamp: discordTimestamp(closesAt),
-      });
-
-      const messageId = await sendChannelMessageWithComponents(env.DISCORD_BOT_TOKEN, channelId, content, buildVoteButtonRow(voteId), [embed]);
-      await setVoteMessage(env, voteId, channelId, messageId);
-
-      const taskRes = await env.DB.prepare(
-        `INSERT INTO tasks (type, title, summary, related_rule, status, priority, due_at, deadline_source, created_at, assigned_at, vote_id)
-         VALUES ('T-E', ?, ?, '§5.5/§5.6', 'in_progress', 'medium', ?, 'rule', ?, ?, ?)`,
-      )
-        .bind(`参加者投票 #${voteId}：${entry.label}`, subject, closesAt, startedAt, startedAt, voteId)
-        .run();
-      await setVoteTaskId(env, voteId, Number(taskRes.meta.last_row_id));
-
-      await writeAuditLog(env, {
-        actor: operatorId,
-        action: "participant_vote_started",
-        target: String(voteId),
-        detail: { approvalKey, subject, eligibleCount: eligible.length, closesAt },
-      });
-
+      const opened = await openParticipantVote(env, { approvalKey, subject, operatorId });
       await sendFollowupMessage(env.DISCORD_APP_ID, interaction.token, {
-        content: `参加者投票 #${voteId} を開始しました（<#${channelId}>）。`,
+        content: opened.ok ? `参加者投票 #${opened.voteId} を開始しました（<#${opened.channelId}>）。` : opened.message,
         flags: EPHEMERAL_FLAG,
       });
     },
