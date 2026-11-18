@@ -29,6 +29,13 @@ const METHOD_COLOR: Record<string, number> = {
   quick: 0xe67e22,
 };
 
+/** 投票の投稿に足す欄（rule-builder の改正案の公開リンク・内容のハッシュなど） */
+export interface VoteEmbedField {
+  name: string;
+  value: string;
+  inline?: boolean;
+}
+
 /** 投票開始の投稿本文（embed）。targetMention はメンション通知を残すため content 側に別出しする。 */
 export function buildVoteOpenedEmbed(args: {
   voteId: number;
@@ -41,6 +48,7 @@ export function buildVoteOpenedEmbed(args: {
   closesAtDiscordTimestamp: string;
   targetMention?: string | null;
   participantVoteRequired?: boolean;
+  extraFields?: VoteEmbedField[];
 }): { content: string; embed: Record<string, unknown> } {
   const fields: Array<{ name: string; value: string; inline?: boolean }> = [];
   if (args.targetMention) {
@@ -48,6 +56,7 @@ export function buildVoteOpenedEmbed(args: {
   }
   fields.push({ name: args.eligibleCountNote ?? "母数（休暇者除外後）", value: `${args.eligibleCount}人`, inline: true });
   fields.push({ name: "締切", value: args.closesAtDiscordTimestamp, inline: true });
+  for (const f of args.extraFields ?? []) fields.push(f);
   if (args.participantVoteRequired) {
     fields.push({
       name: "注記",
@@ -102,14 +111,14 @@ export function buildVoteStatusLine(args: {
   methodLabel?: string;
   closesAtDiscordTimestamp: string;
   status: "open" | "closed";
-  result?: TallyResult | null;
+  result?: (TallyResult & { cancelled?: boolean }) | { cancelled: true; passed: false } | null;
 }): string {
   const methodLabel = args.methodLabel ?? METHOD_LABEL[args.method];
   if (args.status === "open") {
     return `#${args.voteId}（${methodLabel}）：${args.label} — ${args.subject} ／ 締切 ${args.closesAtDiscordTimestamp}`;
   }
   const r = args.result;
-  const outcome = r ? (r.passed ? "可決" : "否決") : "結果不明";
+  const outcome = !r ? "結果不明" : "cancelled" in r && r.cancelled ? "打ち切り" : r.passed ? "可決" : "否決";
   return `#${args.voteId}（${methodLabel}）：${args.label} — ${args.subject} ／ ${outcome}（締切済み）`;
 }
 

@@ -30,6 +30,7 @@ settings:
     notify_default: "000000000000000000"     # Bot通知先（既定）
     server_notice: "000000000000000000"     # 「サーバーお知らせ」：/shogai の障害詳細報（第N報・復旧報）の投稿先（decisions.md #66）
     general_notice: "000000000000000000"    # 「全般用お知らせ」：/shogai の第1報・復旧報の短いアナウンス先（decisions.md #66）
+    rule_notice: "000000000000000000"       # rule-builder の改正の施行の告知先（decisions.md #68）。未設定なら participant_vote_hall
 
   # ── ticket tool（docs/appendix/ticket-tool-spec.md §6）──────
   ticket_tool:
@@ -47,6 +48,7 @@ settings:
     revoke_window_hours: 24
     conflict_hold_hours: 72
     quick_vote_minutes: 15   # 短縮投票の締切（§5.3：会議継続中の短時間タイマー。手動締切は未実装のため長めに）
+    participant_discussion_hours: 24   # rule-builder の参加者協議の長さ。開始の記録からこの時間がたつまで参加者投票を始めない（decisions.md #68）
 
   # ── 割当アルゴリズムの重み・閾値（§4.5）────────────────────
   assignment_weights:
