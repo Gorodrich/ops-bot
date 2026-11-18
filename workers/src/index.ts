@@ -69,6 +69,9 @@ import {
   SHOGAI_MODAL_CUSTOM_ID_PREFIX,
 } from "./incidents/shogaiCommand";
 
+// rule-builder 専用の RPC（Service Binding からだけ呼べる・decisions.md #67）
+export { RuleBuilderRpc } from "./ruleBuilder/rpc";
+
 // Cron式ごとの役割（wrangler.jsonc の triggers.crons と対応）。
 // Cloudflare Workers Free枠はアカウント全体でcronトリガー5件までのため、
 // Phase 5で追加した4ジョブは新規cronを増やさず、既存の2つの発火（10分ごと／15分ごと）に相乗りさせる。
