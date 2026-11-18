@@ -29,6 +29,8 @@ export interface VoteRow {
   message_id: string | null;
   task_id: number | null;
   reminder_sent_at: string | null;
+  /** rule-builder の改正案に紐づく投票（0019_rule_proposals.sql） */
+  rule_proposal_id: string | null;
 }
 
 export async function insertVote(
@@ -44,14 +46,15 @@ export async function insertVote(
     closesAt: string;
     eligibleCount: number;
     createdBy: string;
+    ruleProposalId?: string | null;
   },
 ): Promise<number> {
   const voteType = args.voterScope === "participant" ? "participant_secret" : args.method === "quick" ? "quick" : "type_a";
   const res = await env.DB.prepare(
     `INSERT INTO votes
        (subject, vote_type, voter_scope, approval_key, method, quorum_type, threshold, exclude_target,
-        started_at, closes_at, status, eligible_count, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)`,
+        started_at, closes_at, status, eligible_count, created_by, rule_proposal_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?)`,
   )
     .bind(
       args.subject,
@@ -66,6 +69,7 @@ export async function insertVote(
       args.closesAt,
       args.eligibleCount,
       args.createdBy,
+      args.ruleProposalId ?? null,
     )
     .run();
   return Number(res.meta.last_row_id);
@@ -176,4 +180,25 @@ export async function finalizeVoteTally(env: Env, voteId: number, result: unknow
     await env.DB.prepare("DELETE FROM vote_ballots WHERE vote_id = ?").bind(voteId).run();
   }
   return closedByThisCall;
+}
+
+/** 打ち切った投票の result（集計結果の代わり）。passed は常に false */
+export const CANCELLED_RESULT = { cancelled: true, passed: false, yes: 0, no: 0, abstain: 0 } as const;
+
+/**
+ * 進行中の投票を集計せずに閉じ、個票を破棄する（rule-builder の取り下げ・投稿に失敗した投票）。
+ * finalizeVoteTally と同じく status = 'open' を条件にするので、締切処理と競合しても一方だけが閉じる。
+ * 閉じたときは閉じる前の行を返し、既に閉じていれば null。
+ */
+export async function cancelOpenVote(env: Env, voteId: number): Promise<VoteRow | null> {
+  const vote = await getVote(env, voteId);
+  if (!vote || vote.status !== "open") return null;
+  const res = await env.DB.prepare(
+    `UPDATE votes SET status = 'closed', result = ?, tallied_at = ? WHERE id = ? AND status = 'open'`,
+  )
+    .bind(JSON.stringify(CANCELLED_RESULT), nowIso(), voteId)
+    .run();
+  if ((res.meta.changes ?? 0) === 0) return null;
+  await env.DB.prepare("DELETE FROM vote_ballots WHERE vote_id = ?").bind(voteId).run();
+  return vote;
 }
