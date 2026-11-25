@@ -1,5 +1,6 @@
 // rule-builder の発議・採決（decisions.md #68）。
 // 発議 → 運営投票 → 参加者協議 → 参加者投票 → 可決 → 反映済み の流れと、断る場面（状態・24時間・運営者でない）・取り下げを確かめる。
+// ルール施行令・国内法の改正案（decisions.md #69）は、運営投票（過半数）の可決で passed になる。
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createTestEnv, mockFetch, setSetting } from "./helpers/d1.mjs";
@@ -54,6 +55,8 @@ describe("rule-builder の発議・採決", () => {
     setSetting(env, "deadlines", { vote_hours: 24, quick_vote_minutes: 15, provisional_confirm_hours: 72, revoke_window_hours: 24, conflict_hold_hours: 72, subaccount_confirm_hours: 24 });
     setSetting(env, "approval_types", {
       rule_enactment: { label: "ルールの制定・改正", method: "A", quorum_type: "supermajority_voters", threshold: 0.6667, exclude_self: false, participant_vote_required: true },
+      decree_enactment: { label: "ルール施行令の制定・改正", method: "A", quorum_type: "voters_majority", exclude_self: false },
+      domestic_law_enactment: { label: "ディープステート国内法の制定・改正", method: "A", quorum_type: "voters_majority", exclude_self: false },
     });
     setSetting(env, "participant_approval_types", { rule_enactment: { label: "ルール改正", method: "A", quorum_type: "voters_majority", exclude_self: false } });
     members = {
@@ -282,10 +285,99 @@ describe("rule-builder の発議・採決", () => {
     expect(await withdrawProposal(env, { proposalId: ID, withdrawnBy: UNEI_A })).toMatchObject({ ok: false, code: "bad_state" });
   });
 
+  describe("ルール施行令・国内法の改正案", () => {
+    const DECREE = "令和8年ルール施行令第1号";
+
+    it("発議では種類を返し、国内法の番号も受け付ける", async () => {
+      expect((await submitProposal(env, submitInput({ provisionalNumber: DECREE }))).status.kind).toBe("ルール施行令");
+      expect((await submitProposal(env, submitInput({ provisionalNumber: "令和8年国内法第1号" }))).status.kind).toBe("国内法");
+      expect((await getProposalStatus(env, ID)).provisionalNumber).toBe("令和8年国内法第1号");
+    });
+
+    it("ルール施行令の運営投票は施行令の承認事項（過半数）で始め、件名と案内も施行令にする", async () => {
+      await submitProposal(env, submitInput({ title: "国家の公認に係る国家に関するルール施行令の一部を改正する施行令", provisionalNumber: DECREE }));
+      const r = await startModVote(env, { proposalId: ID, method: "secret", startedBy: UNEI_A, publicUrl: URL_PUBLIC, contentHash: HASH });
+      const vote = await getVote(env, r.status.modVote.voteId);
+      expect(vote).toMatchObject({ approval_key: "decree_enactment", quorum_type: "voters_majority" });
+      expect(vote.subject).toContain(`ルール施行令の改正案「国家の公認に係る国家に関するルール施行令の一部を改正する施行令」（${DECREE}・仮番号）`);
+      const fields = JSON.parse(posts("C_VOTE")[0].body).embeds[0].fields.map((f) => f.value).join("\n");
+      expect(fields).toContain("運営投票で決まります");
+    });
+
+    it("運営内協議中に種類を変えていたら、運営投票の開始で番号・題名を合わせ、国内法の承認事項で始める", async () => {
+      await submitProposal(env, submitInput({ provisionalNumber: DECREE }));
+      const r = await startModVote(env, {
+        proposalId: ID, method: "secret", startedBy: UNEI_A, publicUrl: URL_PUBLIC, contentHash: HASH,
+        provisionalNumber: "令和8年国内法第2号", title: "ディープステート基本法の一部を改正する国内法",
+      });
+      expect(r.status).toMatchObject({ kind: "国内法", provisionalNumber: "令和8年国内法第2号", title: "ディープステート基本法の一部を改正する国内法" });
+      expect(await getVote(env, r.status.modVote.voteId)).toMatchObject({ approval_key: "domestic_law_enactment" });
+    });
+
+    it("運営投票の開始で渡す番号が正しくなければ断る", async () => {
+      await submitProposal(env, submitInput({ provisionalNumber: DECREE }));
+      const r = await startModVote(env, { proposalId: ID, method: "secret", startedBy: UNEI_A, publicUrl: URL_PUBLIC, contentHash: HASH, provisionalNumber: "第2号" });
+      expect(r).toMatchObject({ ok: false, code: "bad_request" });
+      expect(posts("C_VOTE")).toHaveLength(0);
+    });
+
+    it("投票場に投稿できなければ、番号・題名も発議のときに戻す", async () => {
+      await submitProposal(env, submitInput({ provisionalNumber: DECREE }));
+      failPosts = true;
+      const r = await startModVote(env, { proposalId: ID, method: "secret", startedBy: UNEI_A, publicUrl: URL_PUBLIC, contentHash: HASH, provisionalNumber: "令和8年国内法第2号", title: "別の題名" });
+      expect(r.status).toMatchObject({ state: "unei_discussion", provisionalNumber: DECREE, title: "基本ルールの一部を改正するルール" });
+    });
+
+    it("運営投票が過半数で可決すると、参加者協議を経ずに passed になる（可決の日を記録する）", async () => {
+      await submitProposal(env, submitInput({ provisionalNumber: DECREE }));
+      const r = await startModVote(env, { proposalId: ID, method: "secret", startedBy: UNEI_A, publicUrl: URL_PUBLIC, contentHash: HASH });
+      const voteId = r.status.modVote.voteId;
+      await castBallot(env, voteId, UNEI_A, "yes");
+      await castBallot(env, voteId, UNEI_B, "yes");
+      await castBallot(env, voteId, UNEI_C, "no");
+      await closeAndTallyVote(env, await getVote(env, voteId));
+      const s = await getProposalStatus(env, ID);
+      expect(s).toMatchObject({ state: "passed", participantDiscussion: null, participantVote: null });
+      expect(s.decidedAt).not.toBeNull();
+      expect(posts("C_PVOTE")).toHaveLength(0);
+      expect(await recordParticipantDiscussion(env, { proposalId: ID, startedBy: UNEI_A, startedAt: new Date().toISOString() })).toMatchObject({ ok: false, code: "bad_state" });
+      expect((await recordFinalNumber(env, { proposalId: ID, finalNumber: DECREE })).ok).toBe(true);
+    });
+
+    it("運営投票が否決なら否決で終える", async () => {
+      await submitProposal(env, submitInput({ provisionalNumber: "令和8年国内法第1号" }));
+      const r = await startModVote(env, { proposalId: ID, method: "secret", startedBy: UNEI_A, publicUrl: URL_PUBLIC, contentHash: HASH });
+      await castBallot(env, r.status.modVote.voteId, UNEI_A, "yes");
+      await castBallot(env, r.status.modVote.voteId, UNEI_B, "no");
+      await closeAndTallyVote(env, await getVote(env, r.status.modVote.voteId));
+      expect((await getProposalStatus(env, ID)).state).toBe("rejected");
+    });
+
+    it("集計のあとで状態を進められなかったときも、問い合わせで passed に合わせ直す", async () => {
+      await submitProposal(env, submitInput({ provisionalNumber: DECREE }));
+      const r = await startModVote(env, { proposalId: ID, method: "secret", startedBy: UNEI_A, publicUrl: URL_PUBLIC, contentHash: HASH });
+      env.DB.raw
+        .prepare("UPDATE votes SET status = 'closed', result = ?, tallied_at = ? WHERE id = ?")
+        .run(JSON.stringify({ passed: true, yes: 2, no: 1, abstain: 0 }), new Date().toISOString(), r.status.modVote.voteId);
+      expect((await getProposalStatus(env, ID)).state).toBe("passed");
+    });
+  });
+
   it("運営者でない人は投票を始められない（OpsBot でも判定し直す）", async () => {
     await submitProposal(env, submitInput());
     const r = await startModVote(env, { proposalId: ID, method: "secret", startedBy: OTHER, publicUrl: URL_PUBLIC, contentHash: HASH });
     expect(r).toMatchObject({ ok: false, code: "not_unei" });
     expect((await getProposalStatus(env, ID)).state).toBe("unei_discussion");
+  });
+});
+
+describe("承認事項の分類表（migrations/0020）", () => {
+  it("ルール施行令・国内法の制定・改正を、投票者の過半数で足す", () => {
+    const env = createTestEnv();
+    const row = env.DB.raw.prepare("SELECT value FROM settings WHERE key = 'approval_types'").get();
+    expect(JSON.parse(row.value)).toMatchObject({
+      decree_enactment: { label: "ルール施行令の制定・改正", method: "A", quorum_type: "voters_majority", exclude_self: false },
+      domestic_law_enactment: { label: "ディープステート国内法の制定・改正", method: "A", quorum_type: "voters_majority", exclude_self: false },
+    });
   });
 });
