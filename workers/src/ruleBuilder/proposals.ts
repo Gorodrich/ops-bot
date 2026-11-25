@@ -6,6 +6,8 @@
 //   （なし／withdrawn）─submit→ unei_discussion ─startModVote→ mod_vote ─集計→ participant_discussion ／ rejected
 //   participant_discussion ─record→（開始の記録）─24時間後に startParticipantVote→ participant_vote ─集計→ passed ／ rejected
 //   passed ─notifyResult(enacted)→ enacted
+//   ルール施行令・国内法の改正案（改正ルール番号の種類で決める・decisions.md #69）は参加者協議・参加者投票を経ず、
+//   mod_vote ─集計→ passed ／ rejected（運営投票は投票者の過半数）
 //   可決より前（unei_discussion・mod_vote・participant_discussion・participant_vote）なら withdraw → withdrawn
 //
 // 操作した人が運営者であることは、rule-builder のセッションとは別に OpsBot でも判定し直す。
@@ -20,6 +22,7 @@ import type { TallyResult } from "../votes/domain";
 import { getMemberStatus, isSnowflake } from "./memberStatus";
 import type {
   NotifyResultInput,
+  RuleProposalKind,
   RecordFinalNumberInput,
   RecordParticipantDiscussionInput,
   RuleProposalErrorCode,
@@ -35,11 +38,30 @@ import type {
 
 /** 承認事項の分類表のキー（運営投票は settings.approval_types、参加者投票は settings.participant_approval_types） */
 export const RULE_APPROVAL_KEY = "rule_enactment";
+/** 運営投票の承認事項（改正ルール番号の種類ごと・decisions.md #69）。参加者投票はルールだけで RULE_APPROVAL_KEY */
+export const MOD_VOTE_APPROVAL_KEYS: Record<RuleProposalKind, string> = {
+  ルール: RULE_APPROVAL_KEY,
+  ルール施行令: "decree_enactment",
+  国内法: "domestic_law_enactment",
+};
 /** 参加者協議の長さ（settings.deadlines.participant_discussion_hours がなければこの値） */
 export const DEFAULT_PARTICIPANT_DISCUSSION_HOURS = 24;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const RULE_NUMBER = /^令和(元|\d+)年(ルール|ルール施行令)第\d+号$/;
+const RULE_NUMBER = /^令和(元|\d+)年(ルール|ルール施行令|国内法)第\d+号$/;
+
+/** 改正ルール番号の種類（「令和8年ルール施行令第1号」→ ルール施行令）。読めなければルールとして扱う */
+export function proposalKind(number: string | null | undefined): RuleProposalKind {
+  const m = /^令和(?:元|\d+)年(ルール施行令|ルール|国内法)第\d+号$/.exec(number ?? "");
+  return (m?.[1] as RuleProposalKind | undefined) ?? "ルール";
+}
+
+/** 参加者協議・参加者投票を経る（ルールの改正案だけ） */
+export const needsParticipantVote = (kind: RuleProposalKind) => kind === "ルール";
+
+/** 投票の件名に使う「ルールの改正案」「ルール施行令の改正案」「国内法の改正案」 */
+const subjectOf = (row: { title: string; provisional_number: string }) =>
+  `${proposalKind(row.provisional_number)}の改正案「${row.title}」（${row.provisional_number}・仮番号）`;
 const HASH = /^sha256:[0-9a-f]{64}$/;
 
 /** 取り下げられる状態（可決より前） */
@@ -151,6 +173,7 @@ async function toStatus(env: Env, row: RuleProposalRow): Promise<RuleProposalSta
   return {
     proposalId: row.id,
     state: row.state,
+    kind: proposalKind(row.final_number ?? row.provisional_number),
     title: row.title,
     provisionalNumber: row.provisional_number,
     finalNumber: row.final_number,
@@ -315,37 +338,59 @@ export async function submitProposal(env: Env, input: SubmitProposalInput): Prom
 // ---------- 運営投票 ----------
 
 export async function startModVote(env: Env, input: StartModVoteInput): Promise<RuleProposalResult> {
-  const { proposalId, method, startedBy, publicUrl, contentHash } = input ?? ({} as StartModVoteInput);
+  const { proposalId, method, startedBy, publicUrl, contentHash, provisionalNumber, title } = input ?? ({} as StartModVoteInput);
   const row = typeof proposalId === "string" ? await getRow(env, proposalId) : null;
   if (!row) return fail(env, "not_found", "発議の記録が見つかりません", null);
   if (method !== "secret" && method !== "quick") return fail(env, "bad_request", "投票の方式が正しくありません", row);
   if (typeof contentHash !== "string" || !HASH.test(contentHash)) return fail(env, "bad_request", "内容のハッシュが正しくありません", row);
   if (!validPublicUrl(publicUrl)) return fail(env, "bad_request", "公開リンクが正しくありません", row);
+  // 番号・題名は省略できる（省略したら発議のときのまま）。種類で承認事項と手続が決まるので、固定した内容に合わせる
+  if (provisionalNumber !== undefined && (typeof provisionalNumber !== "string" || !RULE_NUMBER.test(provisionalNumber))) {
+    return fail(env, "bad_request", "改正ルール番号が正しくありません", row);
+  }
+  if (title !== undefined && (typeof title !== "string" || !title.trim() || title.length > 200)) {
+    return fail(env, "bad_request", "題名が正しくありません", row);
+  }
   if (row.state !== "unei_discussion") return badState(env, row, "運営投票を開始");
   if (!(await isUnei(env, startedBy))) return notUnei(env, row);
 
   // 先に状態を進めて二重開始を防ぐ。投票を始められなかったら戻す
+  const fixed = {
+    title: title?.trim() ?? row.title,
+    provisional_number: provisionalNumber ?? row.provisional_number,
+  };
   const claimed = await transition(env, proposalId, ["unei_discussion"], {
     state: "mod_vote",
     content_hash: contentHash,
     public_url: publicUrl,
     mod_vote_started_by: startedBy,
+    ...fixed,
   });
   if (!claimed) return badState(env, (await getRow(env, proposalId))!, "運営投票を開始");
 
+  const kind = proposalKind(fixed.provisional_number);
   const opened = await openUneiVote(env, {
-    approvalKey: RULE_APPROVAL_KEY,
-    subject: `ルールの改正案「${row.title}」（${row.provisional_number}・仮番号）`,
+    approvalKey: MOD_VOTE_APPROVAL_KEYS[kind],
+    subject: subjectOf(fixed),
     method,
     operatorId: startedBy,
     ruleProposalId: proposalId,
     extraFields: voteFields(
       { public_url: publicUrl, content_hash: contentHash },
-      "可決したら参加者協議を経て参加者投票を行います。否決なら参加者には回しません。",
+      needsParticipantVote(kind)
+        ? "可決したら参加者協議を経て参加者投票を行います。否決なら参加者には回しません。"
+        : `${kind}の改正は運営投票で決まります。可決したら施行日に ds-craft/rules へ反映します（施行日が未来なら、それまでポータルに施行前として載せます）。`,
     ),
   });
   if (!opened.ok) {
-    await transition(env, proposalId, ["mod_vote"], { state: "unei_discussion", content_hash: null, mod_vote_started_by: null });
+    // 番号・題名も発議のときに戻す
+    await transition(env, proposalId, ["mod_vote"], {
+      state: "unei_discussion",
+      content_hash: null,
+      mod_vote_started_by: null,
+      title: row.title,
+      provisional_number: row.provisional_number,
+    });
     return fail(env, "vote_failed", opened.message, await getRow(env, proposalId));
   }
   await transition(env, proposalId, ["mod_vote"], { mod_vote_id: opened.voteId });
@@ -353,7 +398,7 @@ export async function startModVote(env: Env, input: StartModVoteInput): Promise<
     actor: startedBy,
     action: "rule_proposal_mod_vote_started",
     target: proposalId,
-    detail: { voteId: opened.voteId, method, contentHash },
+    detail: { voteId: opened.voteId, method, contentHash, approvalKey: MOD_VOTE_APPROVAL_KEYS[kind], provisionalNumber: fixed.provisional_number },
   });
   return ok(env, proposalId);
 }
@@ -414,7 +459,7 @@ export async function startParticipantVote(env: Env, input: StartParticipantVote
 
   const opened = await openParticipantVote(env, {
     approvalKey: RULE_APPROVAL_KEY,
-    subject: `ルールの改正案「${row.title}」（${row.provisional_number}・仮番号）`,
+    subject: subjectOf(row),
     operatorId: startedBy,
     ruleProposalId: proposalId,
     extraFields: voteFields(row, "可決したら施行日に ds-craft/rules へ反映します（施行日が未来なら、それまでポータルに施行前として載せます）。"),
@@ -466,6 +511,7 @@ export async function withdrawProposal(env: Env, input: WithdrawProposalInput): 
 /**
  * 改正案に紐づく投票が集計されたら、手続の状態を進める。
  * 運営投票：可決 → participant_discussion（開始の記録前）、否決 → rejected。
+ *   ルール施行令・国内法の改正案は、可決 → passed（参加者協議・参加者投票を経ない・decisions.md #69）。
  * 参加者投票：可決 → passed、否決 → rejected。
  * 取り下げ済みなど、状態が合わないときは何もしない（集計結果は投票側に残る）。
  */
@@ -476,8 +522,10 @@ export async function onRuleProposalVoteTallied(env: Env, vote: VoteRow, result:
   const at = nowIso();
   let next: RuleProposalState | null = null;
   if (row.mod_vote_id === vote.id && row.state === "mod_vote") {
-    next = result.passed ? "participant_discussion" : "rejected";
-    await transition(env, row.id, ["mod_vote"], { state: next, decided_at: result.passed ? null : at });
+    // 手続は運営投票の集計で分かれる（#69 より前に参加者協議へ進んだ施行令の改正案は、そのまま参加者投票まで進める）
+    const decidesHere = !needsParticipantVote(proposalKind(row.provisional_number));
+    next = !result.passed ? "rejected" : decidesHere ? "passed" : "participant_discussion";
+    await transition(env, row.id, ["mod_vote"], { state: next, decided_at: next === "participant_discussion" ? null : at });
   } else if (row.participant_vote_id === vote.id && row.state === "participant_vote") {
     next = result.passed ? "passed" : "rejected";
     await transition(env, row.id, ["participant_vote"], { state: next, decided_at: at });

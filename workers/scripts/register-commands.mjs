@@ -43,6 +43,8 @@ const APPROVAL_KEY_CHOICES_A = [
   { name: "領土の譲渡の承認", value: "territory_transfer_approval" },
   { name: "国家の公認・公認取消", value: "nation_recognition" },
   { name: "ルールの制定・改正（特別多数）", value: "rule_enactment" },
+  { name: "ルール施行令の制定・改正（過半数）", value: "decree_enactment" },
+  { name: "ディープステート国内法の制定・改正（過半数）", value: "domestic_law_enactment" },
   { name: "ワールドデータの外部利用（参加者限定）", value: "worlddata_external_participants_only" },
   { name: "ワールドデータの外部利用（非参加者含む・特別多数）", value: "worlddata_external_include_nonparticipants" },
   { name: "運営者の処罰・解任（本人除く全会一致・target必須）", value: "staff_punishment_dismissal" },

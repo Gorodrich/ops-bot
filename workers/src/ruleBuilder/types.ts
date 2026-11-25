@@ -19,9 +19,13 @@ export interface MemberStatus {
 
 // ---------- 発議・採決（decisions.md #68） ----------
 
+/** 改正ルール番号の種類（手続と運営投票の承認事項はこれで決まる・decisions.md #69） */
+export type RuleProposalKind = "ルール" | "ルール施行令" | "国内法";
+
 /**
  * 手続の状態（OpsBot の rule_proposals.state）。
  * participant_discussion は、開始の記録前（participantDiscussion が null）と記録後の2段階がある。
+ * ルール施行令・国内法の改正案は参加者協議・参加者投票を経ず、運営投票の可決で passed になる（decisions.md #69）。
  */
 export type RuleProposalState =
   | "unei_discussion"
@@ -55,6 +59,8 @@ export interface RuleVoteSummary {
 export interface RuleProposalStatus {
   proposalId: string;
   state: RuleProposalState;
+  /** 改正ルール番号（運営投票の開始後は固定した内容の番号）の種類 */
+  kind: RuleProposalKind;
   title: string;
   provisionalNumber: string;
   finalNumber: string | null;
@@ -100,6 +106,9 @@ export interface StartModVoteInput {
   publicUrl: string;
   /** 固定した内容のハッシュ（sha256:…）。投票の本文に載せる */
   contentHash: string;
+  /** 固定した内容の改正ルール番号・題名（運営内協議中に変わっていれば合わせる。種類で承認事項が決まる） */
+  provisionalNumber?: string;
+  title?: string;
 }
 
 export interface RecordParticipantDiscussionInput {
